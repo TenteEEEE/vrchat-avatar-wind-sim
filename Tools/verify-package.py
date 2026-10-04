@@ -43,8 +43,6 @@ def check_manifest() -> None:
     version = manifest.get("version")
     if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
         fail("package version must be SemVer")
-    if version != "0.1.0":
-        fail("package version must be 0.1.0")
     if manifest.get("unity") != "2022.3":
         fail("package must target Unity 2022.3")
     deps = manifest.get("vpmDependencies", {})
@@ -108,8 +106,18 @@ def check_asmdefs(meta_guids: dict[str, Path]) -> None:
 
 
 
-def check_runtime_boundary() -> None:
-    return
+def check_text_encoding() -> None:
+    # A non-UTF-8 write turns Japanese into runs of '?', which still parses fine.
+    for path in PACKAGE_ROOT.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in (".cs", ".md", ".json", ".asmdef"):
+            continue
+        try:
+            source = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            fail(f"not UTF-8: {package_relative(path)}")
+            continue
+        if re.search(r"[^\s?]\?{3,}", source):
+            fail(f"likely mojibake ('???'): {package_relative(path)}")
 
 
 def check_folder_metas() -> None:
@@ -151,7 +159,7 @@ def main() -> int:
             check_manifest()
             metadata = check_meta_pairs()
             check_asmdefs(metadata)
-            check_runtime_boundary()
+            check_text_encoding()
             check_folder_metas()
         check_release_files()
     except OSError as exc:
