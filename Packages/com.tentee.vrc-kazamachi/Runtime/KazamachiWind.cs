@@ -19,12 +19,6 @@ namespace TenteEEEE.Kazamachi
         }
 
         [Header("Wind")]
-        [Tooltip("導入直後に風を有効にするかを設定します。無効にすると、Expression Menuから有効にするまで風は停止します。")]
-        public bool startEnabled = false;
-
-        [Tooltip("有効にすると風の操作を他のユーザーへ同期します。上下操作OFFで25 bit、ONで33 bitを使います。同期予算を超える場合はこの設定だけローカル動作になります。無効時の同期コストは0 bitです。")]
-        public bool syncToOthers = false;
-
         [Range(0f, 360f)]
         [Tooltip("アバター読み込み直後の風向です。0度は前方(+Z)、90度は右(+X)で、時計回りに指定します。")]
         public float initialDirectionAngle = 90f;
@@ -37,7 +31,7 @@ namespace TenteEEEE.Kazamachi
         [Tooltip("アバター読み込み直後の揺らぎ量です。0で一定の風、1で最大の方向変化と強弱変化になります。")]
         public float initialTurbulence = 0.35f;
 
-        [Tooltip("Expression Menuに上下方向の操作を追加します。有効にすると生成クリップ数が17から49に増え、同期時は追加で8 bitを使います。")]
+        [Tooltip("Expression Menuに上下方向の操作を追加します。有効にすると生成クリップ数が17から49に増えます。")]
         public bool verticalControl = true;
 
         [Range(0f, 1f)]

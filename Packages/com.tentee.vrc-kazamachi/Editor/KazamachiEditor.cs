@@ -8,7 +8,7 @@ namespace TenteEEEE.Kazamachi.Editor
     [CustomEditor(typeof(KazamachiWind))]
     public sealed class KazamachiEditor : UnityEditor.Editor
     {
-        private SerializedProperty _startEnabled, _syncToOthers, _initialDirectionAngle;
+        private SerializedProperty _initialDirectionAngle;
         private SerializedProperty _initialStrength, _initialTurbulence, _verticalControl;
         private SerializedProperty _initialElevation, _maxElevationAngle, _maxWindSpeed;
         private SerializedProperty _gustStrength, _gustFrequency, _maxLeanAngle;
@@ -21,7 +21,6 @@ namespace TenteEEEE.Kazamachi.Editor
         {
             _detailsKey = "Kazamachi.Details." + target.GetInstanceID();
             _showDetails = SessionState.GetBool(_detailsKey, false);
-            _startEnabled = Find("startEnabled"); _syncToOthers = Find("syncToOthers");
             _initialDirectionAngle = Find("initialDirectionAngle"); _initialStrength = Find("initialStrength");
             _initialTurbulence = Find("initialTurbulence"); _verticalControl = Find("verticalControl");
             _initialElevation = Find("initialElevation"); _maxElevationAngle = Find("maxElevationAngle");
@@ -52,11 +51,9 @@ namespace TenteEEEE.Kazamachi.Editor
                 EditorGUILayout.HelpBox("Place this component under a VRChat avatar descriptor.\nVRChatアバターのDescriptorの子階層に配置してください。", MessageType.Warning);
 
             EditorGUILayout.LabelField("Wind", EditorStyles.boldLabel);
-            Field(_startEnabled, "Start Enabled"); Field(_syncToOthers, "Sync To Others");
-            var floatCount = _verticalControl.boolValue ? 4 : 3;
-            EditorGUILayout.LabelField(_syncToOthers.boolValue
-                ? "Sync cost: " + (1 + 8 * floatCount) + " bits (1 Bool + " + floatCount + " Floats × 8)"
-                : "Local only (0 sync bits)", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(new GUIContent(
+                "Synced: starts OFF, other players see the wind too.",
+                "風は常にOFFで開始します。操作は他のプレイヤーにも同期されます（同期パラメータ: Wind 1bit + 各スライダー8bit）。"), EditorStyles.miniLabel);
             Field(_initialDirectionAngle, "Initial Direction (deg)");
             EditorGUILayout.LabelField("0° = front  |  90° = right  |  180° = back  |  270° = left", EditorStyles.miniLabel);
             Field(_initialStrength, "Initial Strength"); Field(_initialTurbulence, "Initial Turbulence");

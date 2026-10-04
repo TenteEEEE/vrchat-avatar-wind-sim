@@ -9,7 +9,6 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using TenteEEEE.Kazamachi;
-using nadena.dev.ndmf.localization;
 using VRC.Dynamics;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
@@ -28,6 +27,12 @@ namespace TenteEEEE.Kazamachi.Editor
             "localEulerAnglesBaked.x", "localEulerAnglesBaked.y", "localEulerAnglesBaked.z",
             "localEulerAngles.x", "localEulerAngles.y", "localEulerAngles.z"
         };
+        private const string KazamachiIconGuid = "efaaa1d7f0314fd6af710a974d678a66";
+        private const string WindIconGuid = "c2002acd2ac14bd28246f5030b4188c4";
+        private const string DirectionIconGuid = "387adb1b1bb445edbdb8eb6eb907cdbd";
+        private const string StrengthIconGuid = "5b6b5d46786e43b5a5f03a3d0a306cba";
+        private const string TurbulenceIconGuid = "6d44e52dd3ca486398d10927c832cea6";
+        private const string ElevationIconGuid = "6357f96426374d3bab0507aaed990cda";
         private static int _generatedClipCount;
         private static int _totalKeyframeCount;
 
@@ -37,21 +42,6 @@ namespace TenteEEEE.Kazamachi.Editor
             public VRCExpressionParameters Parameters;
             public List<VRCExpressionParameters.Parameter> ParameterList;
             public VRCExpressionsMenu RootMenu;
-        }
-
-        private sealed class ParameterBudgetError : SimpleError
-        {
-            private const string Key = "tenteeeee.kazamachi.parameter-budget";
-            private const string Message = "Expression Parametersの同期予算を超えるため、このKazamachi設定はローカル専用で動作します。";
-            private static readonly Localizer LocalizedMessage = new Localizer("ja-jp", () =>
-                new List<(string, Func<string, string>)>
-                {
-                    ("ja-jp", key => key == Key ? Message : null)
-                });
-
-            public override Localizer Localizer => LocalizedMessage;
-            public override string TitleKey => Key;
-            public override ErrorSeverity Severity => ErrorSeverity.NonFatal;
         }
 
         private sealed class TargetInfo
@@ -103,6 +93,12 @@ namespace TenteEEEE.Kazamachi.Editor
             var generatedLayerCount = 0;
             var skippedCount = 0;
             var controls = CreateRuntimeControlState(context);
+            var kazamachiIcon = LoadIcon(KazamachiIconGuid);
+            var windIcon = LoadIcon(WindIconGuid);
+            var directionIcon = LoadIcon(DirectionIconGuid);
+            var strengthIcon = LoadIcon(StrengthIconGuid);
+            var turbulenceIcon = LoadIcon(TurbulenceIconGuid);
+            var elevationIcon = LoadIcon(ElevationIconGuid);
 
             for (var windIndex = 0; windIndex < settings.Length; windIndex++)
             {
@@ -188,8 +184,7 @@ namespace TenteEEEE.Kazamachi.Editor
                     var turbulenceParameter = parameterPrefix + "/Turbulence";
                     var elevationParameter = wind.verticalControl ? parameterPrefix + "/Elevation" : null;
 
-                    // Bool so a synced Enabled costs 1 bit instead of a Float's 8.
-                    AddAnimatorParameter(fx, enabledParameter, wind.startEnabled ? 1f : 0f,
+                    AddAnimatorParameter(fx, enabledParameter, 0f,
                         AnimatorControllerParameterType.Bool);
                     AddAnimatorParameter(fx, directionParameter,
                         Mathf.Clamp(wind.initialDirectionAngle, 0f, 360f) / 360f);
@@ -208,8 +203,8 @@ namespace TenteEEEE.Kazamachi.Editor
                     layer.DefaultWeight = 1f;
                     layer.BlendingMode = AnimatorLayerBlendingMode.Override;
 
-                    // Off/Wind are separate states switched by the Bool so the toggle stays
-                    // a single bit; the cross-fade keeps ON/OFF from snapping.
+                    // Off/Wind are separate states switched by the Bool. The cross-fade
+                    // keeps ON/OFF from snapping.
                     var offState = layer.StateMachine.AddState("Wind Off");
                     offState.WriteDefaultValues = writeDefaults;
                     offState.Motion = neutral;
@@ -222,12 +217,13 @@ namespace TenteEEEE.Kazamachi.Editor
                         CreateToggleTransition(windState, enabledParameter, true));
                     windState.Transitions = ImmutableList.Create(
                         CreateToggleTransition(offState, enabledParameter, false));
-                    layer.StateMachine.DefaultState = wind.startEnabled ? windState : offState;
+                    layer.StateMachine.DefaultState = offState;
                     InstallRuntimeControls(context, controls, enabledParameter,
                         directionParameter, strengthParameter, turbulenceParameter, elevationParameter,
-                        wind.startEnabled, Mathf.Clamp(wind.initialDirectionAngle, 0f, 360f) / 360f,
+                        Mathf.Clamp(wind.initialDirectionAngle, 0f, 360f) / 360f,
                         wind.initialStrength, wind.initialTurbulence, wind.initialElevation,
-                        wind.syncToOthers, windIndex);
+                        windIndex, kazamachiIcon, windIcon, directionIcon, strengthIcon,
+                        turbulenceIcon, elevationIcon);
                     generatedLayerCount++;
                 }
             }
@@ -600,6 +596,12 @@ namespace TenteEEEE.Kazamachi.Editor
             });
         }
 
+        private static Texture2D LoadIcon(string guid)
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            return string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
         private static RuntimeControlState CreateRuntimeControlState(BuildContext context)
         {
             var descriptor = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
@@ -632,35 +634,27 @@ namespace TenteEEEE.Kazamachi.Editor
             string strengthParameter,
             string turbulenceParameter,
             string elevationParameter,
-            bool startEnabled,
             float startDirection,
             float startStrength,
             float startTurbulence,
             float startElevation,
-            bool synced,
-            int index)
+            int index,
+            Texture2D kazamachiIcon,
+            Texture2D windIcon,
+            Texture2D directionIcon,
+            Texture2D strengthIcon,
+            Texture2D turbulenceIcon,
+            Texture2D elevationIcon)
         {
             if (state == null) return;
 
-            var firstNewParameter = state.ParameterList.Count;
-            AddExpressionParameter(state.ParameterList, enabledParameter, startEnabled ? 1f : 0f, synced,
+            AddExpressionParameter(state.ParameterList, enabledParameter, 0f,
                 VRCExpressionParameters.ValueType.Bool);
-            AddExpressionParameter(state.ParameterList, directionParameter, Mathf.Clamp01(startDirection), synced);
-            AddExpressionParameter(state.ParameterList, strengthParameter, Mathf.Clamp01(startStrength), synced);
-            AddExpressionParameter(state.ParameterList, turbulenceParameter, Mathf.Clamp01(startTurbulence), synced);
+            AddExpressionParameter(state.ParameterList, directionParameter, Mathf.Clamp01(startDirection));
+            AddExpressionParameter(state.ParameterList, strengthParameter, Mathf.Clamp01(startStrength));
+            AddExpressionParameter(state.ParameterList, turbulenceParameter, Mathf.Clamp01(startTurbulence));
             if (elevationParameter != null)
-            {
-                AddExpressionParameter(state.ParameterList, elevationParameter, Mathf.Clamp01(startElevation), synced);
-            }
-            state.Parameters.parameters = state.ParameterList.ToArray();
-            if (synced && state.Parameters.CalcTotalCost() >
-                VRCExpressionParameters.MAX_PARAMETER_COST)
-            {
-                for (var i = firstNewParameter; i < state.ParameterList.Count; i++)
-                    state.ParameterList[i].networkSynced = false;
-                ErrorReport.WithContextObject(state.Descriptor.gameObject,
-                    () => ErrorReport.ReportError(new ParameterBudgetError()));
-            }
+                AddExpressionParameter(state.ParameterList, elevationParameter, Mathf.Clamp01(startElevation));
 
             var windMenu = ScriptableObject.CreateInstance<VRCExpressionsMenu>();
             windMenu.name = index == 0 ? "Kazamachi" : "Kazamachi " + (index + 1);
@@ -669,6 +663,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 new VRCExpressionsMenu.Control
                 {
                     name = "Wind",
+                    icon = windIcon,
                     type = VRCExpressionsMenu.Control.ControlType.Toggle,
                     parameter = new VRCExpressionsMenu.Control.Parameter { name = enabledParameter },
                     value = 1f
@@ -676,6 +671,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 new VRCExpressionsMenu.Control
                 {
                     name = "Direction",
+                    icon = directionIcon,
                     type = VRCExpressionsMenu.Control.ControlType.RadialPuppet,
                     subParameters = new[]
                     {
@@ -685,6 +681,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 new VRCExpressionsMenu.Control
                 {
                     name = "Strength",
+                    icon = strengthIcon,
                     type = VRCExpressionsMenu.Control.ControlType.RadialPuppet,
                     subParameters = new[]
                     {
@@ -694,6 +691,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 new VRCExpressionsMenu.Control
                 {
                     name = "Turbulence",
+                    icon = turbulenceIcon,
                     type = VRCExpressionsMenu.Control.ControlType.RadialPuppet,
                     subParameters = new[]
                     {
@@ -706,6 +704,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 windMenu.controls.Insert(2, new VRCExpressionsMenu.Control
                 {
                     name = "Elevation",
+                    icon = elevationIcon,
                     type = VRCExpressionsMenu.Control.ControlType.RadialPuppet,
                     subParameters = new[]
                     {
@@ -734,6 +733,7 @@ namespace TenteEEEE.Kazamachi.Editor
             targetMenu.controls.Add(new VRCExpressionsMenu.Control
             {
                 name = windMenu.name,
+                icon = kazamachiIcon,
                 type = VRCExpressionsMenu.Control.ControlType.SubMenu,
                 subMenu = windMenu
             });
@@ -773,17 +773,18 @@ namespace TenteEEEE.Kazamachi.Editor
 
         private static void AddExpressionParameter(
             ICollection<VRCExpressionParameters.Parameter> parameters, string name, float defaultValue,
-            bool synced, VRCExpressionParameters.ValueType valueType = VRCExpressionParameters.ValueType.Float)
+            VRCExpressionParameters.ValueType valueType = VRCExpressionParameters.ValueType.Float)
         {
-            if (parameters.Any(parameter => parameter != null && parameter.name == name)) return;
-            parameters.Add(new VRCExpressionParameters.Parameter
+            var parameter = parameters.FirstOrDefault(item => item != null && item.name == name);
+            if (parameter == null)
             {
-                name = name,
-                valueType = valueType,
-                defaultValue = defaultValue,
-                saved = false,
-                networkSynced = synced
-            });
+                parameter = new VRCExpressionParameters.Parameter { name = name };
+                parameters.Add(parameter);
+            }
+            parameter.valueType = valueType;
+            parameter.defaultValue = defaultValue;
+            parameter.saved = false;
+            parameter.networkSynced = true;
         }
 
         private static void AddRotationCurves(

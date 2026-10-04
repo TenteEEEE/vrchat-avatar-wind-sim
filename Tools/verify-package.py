@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import zlib
 from pathlib import Path
 
 
@@ -140,7 +141,11 @@ def check_release_files() -> None:
         if path.exists():
             fail(f"unexpected Unity project metadata at repository root: {path.relative_to(REPOSITORY_ROOT)}")
     for path in REPOSITORY_ROOT.rglob("*"):
-        if path.is_file() and path.suffix.lower() in (".dll", ".rsp"):
+        if (
+            path.is_file()
+            and path.suffix.lower() in (".dll", ".rsp")
+            and "_work" not in path.relative_to(REPOSITORY_ROOT).parts
+        ):
             fail(f"build artifact must not remain in output: {path.relative_to(REPOSITORY_ROOT)}")
 
     runtime = PACKAGE_ROOT / "Runtime" / "KazamachiWind.cs"
@@ -149,6 +154,113 @@ def check_release_files() -> None:
     runtime_meta = PACKAGE_ROOT / "Runtime" / "KazamachiWind.cs.meta"
     if not runtime_meta.is_file() or guid(runtime_meta) != "265eabde39285484a84891f62d22b0fc":
         fail("KazamachiWind must retain the component GUID")
+
+
+
+ICON_GUIDS = {
+    "Kazamachi": ("efaaa1d7f0314fd6af710a974d678a66", "f68dfb1b7fa44dc2b1c06e1818eb00df"),
+    "Wind": ("c2002acd2ac14bd28246f5030b4188c4", "f57cb7dd289e444f87951a94350ac1c0"),
+    "Direction": ("387adb1b1bb445edbdb8eb6eb907cdbd", "21d2760a1d554f98981821932ad80673"),
+    "Strength": ("5b6b5d46786e43b5a5f03a3d0a306cba", "605406c6c0c7412ba764f7019d3a2129"),
+    "Turbulence": ("6d44e52dd3ca486398d10927c832cea6", "b542cf339d2b48ecabdc7cca00187490"),
+    "Elevation": ("6357f96426374d3bab0507aaed990cda", "af88516d9e6d4dbaa7f26845ce3c8e55"),
+}
+
+
+def png_has_transparent_and_opaque(path: Path) -> tuple[bool, bool]:
+    import struct
+
+    raw = path.read_bytes()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("invalid PNG signature")
+    offset = 8
+    compressed = bytearray()
+    width = height = bit_depth = color_type = None
+    while offset < len(raw):
+        length = struct.unpack(">I", raw[offset:offset + 4])[0]
+        kind = raw[offset + 4:offset + 8]
+        data = raw[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if kind == b"IHDR":
+            width, height, bit_depth, color_type, compression, filtering, interlace = struct.unpack(">IIBBBBB", data)
+        elif kind == b"IDAT":
+            compressed.extend(data)
+        elif kind == b"IEND":
+            break
+    if (width, height, bit_depth, color_type) != (256, 256, 8, 6):
+        raise ValueError("PNG must be 256x256, 8-bit RGBA")
+    decoded = zlib.decompress(compressed)
+    stride = width * 4
+    previous = bytearray(stride)
+    has_zero = has_full = False
+
+    def paeth(a: int, b: int, c: int) -> int:
+        estimate = a + b - c
+        da, db, dc = abs(estimate - a), abs(estimate - b), abs(estimate - c)
+        return a if da <= db and da <= dc else b if db <= dc else c
+
+    for y in range(height):
+        row_offset = y * (stride + 1)
+        filter_type = decoded[row_offset]
+        scan = bytearray(decoded[row_offset + 1:row_offset + 1 + stride])
+        for i in range(stride):
+            left = scan[i - 4] if i >= 4 else 0
+            above = previous[i]
+            upper_left = previous[i - 4] if i >= 4 else 0
+            if filter_type == 1:
+                scan[i] = (scan[i] + left) & 255
+            elif filter_type == 2:
+                scan[i] = (scan[i] + above) & 255
+            elif filter_type == 3:
+                scan[i] = (scan[i] + ((left + above) // 2)) & 255
+            elif filter_type == 4:
+                scan[i] = (scan[i] + paeth(left, above, upper_left)) & 255
+            elif filter_type != 0:
+                raise ValueError(f"unsupported PNG filter {filter_type}")
+        for i in range(3, stride, 4):
+            has_zero |= scan[i] == 0
+            has_full |= scan[i] == 255
+        previous = scan
+    return has_zero, has_full
+
+
+def check_icons() -> None:
+    icons = PACKAGE_ROOT / "Icons"
+    plugin = PACKAGE_ROOT / "Editor" / "KazamachiBuildPlugin.cs"
+    plugin_source = text(plugin) if plugin.is_file() else ""
+    for name, (expected_guid, expected_sprite) in ICON_GUIDS.items():
+        image = icons / f"{name}.png"
+        meta = Path(str(image) + ".meta")
+        if not image.is_file():
+            fail(f"missing menu icon: {package_relative(image)}")
+        else:
+            try:
+                transparent, opaque = png_has_transparent_and_opaque(image)
+                if not transparent or not opaque:
+                    fail(f"icon must contain fully transparent and opaque pixels: {package_relative(image)}")
+            except (OSError, ValueError, zlib.error) as exc:
+                fail(f"invalid icon {package_relative(image)}: {exc}")
+        if not meta.is_file():
+            fail(f"missing icon .meta: {package_relative(meta)}")
+            continue
+        source = text(meta)
+        if "TextureImporter:" not in source:
+            fail(f"icon meta must use TextureImporter: {package_relative(meta)}")
+        if guid(meta) != expected_guid:
+            fail(f"unexpected icon GUID for {name}")
+        if f"spriteID: {expected_sprite}" not in source:
+            fail(f"unexpected spriteID for {name}")
+        if "enableMipMap: 0" not in source or "alphaIsTransparency: 1" not in source:
+            fail(f"icon importer transparency settings are invalid for {name}")
+        if any(int(value) > 256 for value in re.findall(r"maxTextureSize:\s*(\d+)", source)):
+            fail(f"icon maxTextureSize exceeds 256 for {name}")
+        if expected_guid not in plugin_source:
+            fail(f"build plugin is missing icon GUID for {name}")
+
+    for source in PACKAGE_ROOT.rglob("*.cs"):
+        contents = text(source)
+        if re.search(r"\b(?:syncToOthers|startEnabled)\b|networkSynced\s*=(?!\s*true\b)", contents, re.IGNORECASE):
+            fail(f"removed sync/start-enabled code remains: {package_relative(source)}")
 
 
 def main() -> int:
@@ -161,6 +273,7 @@ def main() -> int:
             check_asmdefs(metadata)
             check_text_encoding()
             check_folder_metas()
+            check_icons()
         check_release_files()
     except OSError as exc:
         fail(f"file access error: {exc}")

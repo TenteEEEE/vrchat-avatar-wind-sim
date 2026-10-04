@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- **Breaking:** Remove Sync To Others and Start Enabled. Wind always starts OFF and menu operations are always synced to other players (33 bits per component, 25 without Elevation).
+- Add icons to the Expression Menu submenu and all five controls.
+
 ## 0.1.1
 
 - Fix the bundled Japanese manual (README.md), which was garbled in 0.1.0.

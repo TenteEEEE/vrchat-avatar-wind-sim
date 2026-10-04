@@ -2,7 +2,7 @@
 
 VRChatアバターの既存PhysBoneに、撮影向けの「風」を加えるNDMFプラグインです。
 ビルド時にPhysBone rootを揺らすループアニメーションをFX Animatorへ生成し、Expression Menuから風向・強さ・揺らぎを操作できます。
-カスタムスクリプトはアップロードされません。
+カスタムスクリプトはアップロードされません。風は常にOFFで開始します。メニュー操作は同期され、他のプレイヤーにも風が見えます。
 
 ## 導入
 
@@ -14,7 +14,7 @@ Inspectorの項目名は英語です。マウスオーバーで日本語の説�
 
 ## Expression Menu
 
-`Kazamachi` サブメニューに次の項目が追加されます。
+`Kazamachi` サブメニューにアイコン付きで次の項目が追加されます。
 
 | 項目 | 種類 | 内容 |
 |---|---|---|
@@ -30,8 +30,6 @@ Inspectorの項目名は英語です。マウスオーバーで日本語の説�
 
 | Inspector | 既定値 | 説明 |
 |---|---|---|
-| Start Enabled | OFF | 導入直後の風のON/OFF |
-| Sync To Others | OFF | ONで他人にも風が見えます。同期コストは25 bit（上下OFF）または33 bit（上下ON） |
 | Initial Direction / Strength / Turbulence | 90° / 0.35 / 0.35 | 各ラジアルの初期値 |
 | Vertical Control | ON | 上下ラジアルを追加します。生成クリップ数は17→49に増えます |
 | Max Elevation Angle | 60° | 上下ラジアル端での風の仰角 |
@@ -67,8 +65,8 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 - PhysBoneに外力を与える機能ではありません。PhysBone rootの回転をループアニメーションで動かし、`isAnimated` を有効にします。PhysBoneの慣性・Spring・Pullがその動きに反応します。
 - 全クリップを「強さ1の暴風」で生成します。実行時はStrengthに応じて振幅と再生速度を落とします。
 - Write Defaultsは、アバターのFXレイヤーの多数派に合わせます。
-- パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false` です。
-- Sync To Others ONで同期パラメータの上限を超える場合は、NDMFの警告を出し、その設定だけをローカル専用にします。
+- パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。
+- 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。パラメータ上限256bitに近いアバターでは注意してください。
 - Pullが強い、Immobileが高い、角度制限が小さい、といったPhysBoneでは風が弱く見えます。
 - 生成データが重い場合は、`Vertical Control` をOFFにするか、Sample RateまたはLoop Durationを下げてください。ビルドログに生成クリップ数と合計キー数が表示されます。
 

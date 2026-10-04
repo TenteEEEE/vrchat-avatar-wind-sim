@@ -6,6 +6,6 @@ VRChatアバターのPhysBoneに風の揺れを加えるツールです。NDMF�
 
 VPMリポジトリ `https://tenteeeee.github.io/vpm-repos/index.json` を追加して **Kazamachi** をインストールします。アバターのルートを選択し、`GameObject > Kazamachi` からコンポーネントを追加してください。Inspectorで対象と風の設定を行い、NDMF経由でビルドします。
 
-Expression Menuのサブメニュー名は `Kazamachi` です。`Wind`で風のON/OFF、`Direction`で風向、`Strength`で強さ、`Turbulence`で揺らぎを操作します。上下方向を有効にすると`Elevation`も表示されます。
+Expression Menuのサブメニュー名は `Kazamachi` です。`Wind`で風のON/OFF、`Direction`で風向、`Strength`で強さ、`Turbulence`で揺らぎを操作します。上下方向を有効にすると`Elevation`も表示されます。メニューには各項目のアイコンが付きます。風は常にOFFで開始します。メニュー操作は同期され、他のプレイヤーにも風が見えます。同期パラメータはKazamachiコンポーネント1個あたり33bit（Elevationなしは25bit）です。
 
 Unity 2022.3、VRChat Avatars SDK 3.10.5以降、NDMF 1.14.8以降が必要です。詳しい設定は[パッケージ説明書](Packages/com.tentee.vrc-kazamachi/README.md)を参照してください。
