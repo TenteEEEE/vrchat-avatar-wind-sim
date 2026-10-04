@@ -1,0 +1,25 @@
+{
+  "name": "com.tentee.vrc-kazamachi",
+  "displayName": "Kazamachi",
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "author": {
+    "name": "TenteEEEE",
+    "url": "https://github.com/TenteEEEE"
+  },
+  "description": "Photo-friendly wind for VRChat avatars: animates PhysBone roots with a looping, radial-controlled breeze-to-storm.",
+  "license": "MIT",
+  "keywords": [
+    "vrchat",
+    "avatar",
+    "wind",
+    "physbone",
+    "ndmf"
+  ],
+  "vpmDependencies": {
+    "com.vrchat.avatars": "^3.10.5",
+    "nadena.dev.ndmf": "^1.14.8"
+  },
+  "url": "https://github.com/TenteEEEE/vrchat-avatar-wind-sim",
+  "changelogUrl": "https://github.com/TenteEEEE/vrchat-avatar-wind-sim/blob/main/Packages/com.tentee.vrc-kazamachi/CHANGELOG.md"
+}

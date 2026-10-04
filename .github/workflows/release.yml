@@ -1,0 +1,210 @@
+name: Release VPM package
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, verify, and save files as a workflow artifact without publishing
+        type: boolean
+        required: false
+        default: false
+      overwrite_assets:
+        description: Allow replacing the assets of an existing release
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  packageName: com.tentee.vrc-kazamachi
+  packagePath: Packages/com.tentee.vrc-kazamachi
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Read package version and validate tag
+        id: package
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # Publishing requires a tag so package metadata always matches the release version.
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" != "true" && "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::Publishing requires a semantic version tag. Use dry_run to build from a branch."
+            exit 1
+          fi
+          VERSION="$(jq -r '.version' "$packagePath/package.json")"
+          if [[ "$EVENT_NAME" == "push" || ( "$EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == refs/tags/* ) ]]; then
+            TAG="$REF_NAME"
+            if [[ ! "$TAG" =~ ^v?((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
+              echo "::error::Tag '$TAG' must be a semantic version x.x.x, optionally prefixed with v."
+              exit 1
+            fi
+            VERSION="${BASH_REMATCH[1]}"
+            jq --arg version "$VERSION" '.version = $version' "$packagePath/package.json" > package.json.tmp
+            mv package.json.tmp "$packagePath/package.json"
+          elif [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+            echo '::error::Could not read a package version from package.json.'
+            exit 1
+          else
+            TAG="$VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify package
+        run: python3 Tools/verify-package.py
+
+      - name: Create VPM archive
+        working-directory: ${{ env.packagePath }}
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: zip -r "${{ github.workspace }}/${{ env.packageName }}-${VERSION}.zip" .
+
+      - name: Create UnityPackage file list
+        run: find "${{ env.packagePath }}" -name '*.meta' > metaList
+
+      - name: Create UnityPackage
+        uses: pCYSl5EDgo/create-unitypackage@v1.2.3
+        with:
+          package-path: ${{ env.packageName }}-${{ steps.package.outputs.version }}.unitypackage
+          include-files: metaList
+
+      - name: Verify archive package metadata
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+          ZIP_FILE: ${{ env.packageName }}-${{ steps.package.outputs.version }}.zip
+        run: |
+          set -euo pipefail
+          if ! unzip -Z1 "$ZIP_FILE" | grep -Fxq 'package.json'; then
+            echo "::error::The archive '$ZIP_FILE' must contain package.json at its root."
+            exit 1
+          fi
+          ARCHIVE_VERSION="$(unzip -p "$ZIP_FILE" package.json | jq -er '.version')"
+          if [[ "$ARCHIVE_VERSION" != "$VERSION" ]]; then
+            echo "::error::Archive package version '$ARCHIVE_VERSION' does not match tag/version '$VERSION'."
+            exit 1
+          fi
+
+      - name: Save dry-run artifacts
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.package.outputs.version }}
+          path: |
+            ${{ env.packageName }}-${{ steps.package.outputs.version }}.zip
+            ${{ env.packageName }}-${{ steps.package.outputs.version }}.unitypackage
+            ${{ env.packagePath }}/package.json
+          if-no-files-found: error
+
+      - name: Publish release assets
+        id: publish
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ steps.package.outputs.tag }}
+          VERSION: ${{ steps.package.outputs.version }}
+          OVERWRITE_ASSETS: ${{ inputs.overwrite_assets }}
+          ZIP_FILE: ${{ env.packageName }}-${{ steps.package.outputs.version }}.zip
+          UNITYPACKAGE_FILE: ${{ env.packageName }}-${{ steps.package.outputs.version }}.unitypackage
+          PACKAGE_JSON: ${{ env.packagePath }}/package.json
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$ZIP_FILE" \
+                && [[ "$OVERWRITE_ASSETS" != "true" ]]; then
+              echo "::error::Release '$TAG' already has '$ZIP_FILE'. Rebuilding can change the SHA256 recorded by the VPM listing. Set overwrite_assets=true to replace assets."
+              exit 1
+            fi
+            gh release upload "$TAG" "$ZIP_FILE" "$UNITYPACKAGE_FILE" "$PACKAGE_JSON" --clobber
+            echo 'mode=uploaded to existing release' >> "$GITHUB_OUTPUT"
+          else
+            gh release create "$TAG" "$ZIP_FILE" "$UNITYPACKAGE_FILE" "$PACKAGE_JSON" \
+              --title "$TAG" --generate-notes --target "${GITHUB_SHA}"
+            echo 'mode=created' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger VPM listing rebuild
+        id: listing
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        shell: bash
+        env:
+          VPM_REPOS_TOKEN: ${{ secrets.VPM_REPOS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VPM_REPOS_TOKEN" ]; then
+            GH_TOKEN="$VPM_REPOS_TOKEN" gh workflow run build-listing.yml -R TenteEEEE/vpm-repos --ref main
+            echo 'triggered=true' >> "$GITHUB_OUTPUT"
+            echo 'Listing rebuild workflow was triggered.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '::notice::The VPM listing must be rebuilt manually (Actions → Build Repo Listing → Run workflow). A fine-grained PAT with Actions: Read and write on TenteEEEE/vpm-repos can be stored as VPM_REPOS_TOKEN to trigger it automatically.'
+            echo 'triggered=false' >> "$GITHUB_OUTPUT"
+            echo 'Listing rebuild: not triggered; manual rebuild required.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          PUBLISH_MODE: ${{ steps.publish.outputs.mode }}
+          LISTING_TRIGGERED: ${{ steps.listing.outputs.triggered }}
+          ZIP_FILE: ${{ env.packageName }}-${{ steps.package.outputs.version }}.zip
+          UNITYPACKAGE_FILE: ${{ env.packageName }}-${{ steps.package.outputs.version }}.unitypackage
+          PACKAGE_JSON: ${{ env.packagePath }}/package.json
+        run: |
+          set -euo pipefail
+          if [[ "$DRY_RUN" == "true" ]]; then
+            MODE='dry run'
+          elif [[ -n "$PUBLISH_MODE" ]]; then
+            MODE="$PUBLISH_MODE"
+          else
+            MODE='not published'
+          fi
+          if [[ -z "$LISTING_TRIGGERED" ]]; then
+            LISTING_STATUS='not triggered'
+          elif [[ "$LISTING_TRIGGERED" == 'true' ]]; then
+            LISTING_STATUS='triggered'
+          else
+            LISTING_STATUS='not triggered (manual rebuild required)'
+          fi
+
+          {
+            echo '## Release workflow'
+            echo
+            echo "- Version: ${VERSION:-unknown}"
+            echo "- Mode: $MODE"
+            echo "- VPM listing rebuild: $LISTING_STATUS"
+            echo '- Files and SHA256:'
+            for file in "$ZIP_FILE" "$UNITYPACKAGE_FILE" "$PACKAGE_JSON"; do
+              if [[ -f "$file" ]]; then
+                sha256sum "$file" | awk '{print "  - `" $2 "` — `" $1 "`"}'
+              else
+                echo "  - \`$file\` — unavailable"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

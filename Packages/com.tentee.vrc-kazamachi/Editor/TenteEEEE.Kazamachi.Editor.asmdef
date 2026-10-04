@@ -1,0 +1,26 @@
+{
+  "name": "TenteEEEE.Kazamachi.Editor",
+  "rootNamespace": "TenteEEEE.Kazamachi.Editor",
+  "references": [
+    "TenteEEEE.Kazamachi.Runtime",
+    "nadena.dev.ndmf",
+    "nadena.dev.ndmf.runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "VRCSDKBase.dll",
+    "VRCSDK3A.dll",
+    "VRC.Dynamics.dll",
+    "VRC.SDK3.Dynamics.PhysBone.dll",
+    "System.Collections.Immutable.dll"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
