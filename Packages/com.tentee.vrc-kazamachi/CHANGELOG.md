@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- Successful builds no longer open the NDMF Console or leave warnings.
+- Replace per-item logs with one summary log.
+- Report a missing FX Animator through NDMF.
+- Turn off Loop Pose on generated clips: same motion, about 2.6x cheaper Animator evaluation in a 136-root measurement.
+
 ## 0.3.2
 
 - Fix: a root listed in another PhysBone's Ignore Transforms got no wind and changed that chain; the inserted pivot is now added to the same Ignore Transforms.

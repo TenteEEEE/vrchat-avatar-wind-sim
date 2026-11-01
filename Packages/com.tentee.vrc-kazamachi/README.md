@@ -50,7 +50,7 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 ## 対象PhysBoneの選び方
 
 - **Auto（既定）**: 全PhysBoneが対象です。ただし、GameObject名またはroot名に `Auto Exclude Keywords`（既定: breast / bust / oppai / boob / mune / 胸）を含むものは除外します。
-  親階層は見ないので、胸ボーン配下のアクセサリーは対象に残ります。除外結果はビルド時にConsoleへ出力されます。
+  親階層は見ないので、胸ボーン配下のアクセサリーは対象に残ります。除外結果はビルド時のConsoleのサマリーログに表示されます。
 - **All PhysBones**: 全PhysBoneが対象です。`Excluded PhysBones` に入れたものだけを外します。
 - **Include Only**: `Included PhysBones` に指定したものだけを動かします。
 
@@ -73,7 +73,7 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 - パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。複数のコンポーネントが生成される場合は、レイヤー、メニュー、パラメータに対応する番号が付きます。
 - 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。上限を超える場合はその風の生成をスキップし、NDMFのレポートに必要量と空き容量を表示します。
 - Pullが強い、Immobileが高い、角度制限が小さい、といったPhysBoneでは風が弱く見えます。
-- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.5°以内に収まるよう自動で間引かれます。ビルド後のNDMFの表示に、風を追加したroot数、除外数、アニメーションデータの目安サイズ（非圧縮）が出ます。
+- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.5°以内に収まるよう自動で間引かれます。ビルド後のConsoleに、風を追加したroot数、除外数、アニメーションデータの目安サイズ（非圧縮）をまとめたログが1件出ます。NDMF Consoleが開くのは、風のスキップやFXの欠落など対応が必要な問題がある場合だけです。
 
 ## 推奨の確認手順
 

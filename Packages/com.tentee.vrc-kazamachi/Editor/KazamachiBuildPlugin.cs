@@ -138,7 +138,10 @@ namespace TenteEEEE.Kazamachi.Editor
             if (!animatorServices.ControllerContext.Controllers.TryGetValue(
                     VRCAvatarDescriptor.AnimLayerType.FX, out fx) || fx == null)
             {
-                Debug.LogWarning("[Kazamachi] FX Animatorが見つからないため、風を生成できませんでした。");
+                Report(ErrorSeverity.NonFatal, "FX Animator not found; wind was not generated.",
+                    "FX Animatorが見つからないため、風を生成できませんでした。", settings[0]);
+                LogSummary(0, 0, stats, false, new Dictionary<string, List<string>>(),
+                    new List<string>(), settings[0]);
                 Cleanup(allSettings, context.AvatarRootTransform);
                 return;
             }
@@ -157,14 +160,13 @@ namespace TenteEEEE.Kazamachi.Editor
                 .Any(component => component != null &&
                     ((component.GetType().FullName ?? string.Empty).StartsWith("VF.", StringComparison.Ordinal) ||
                      component.GetType().Name.IndexOf("VRCFury", StringComparison.Ordinal) >= 0));
-            if (hasVrcFury)
-                Debug.Log("[Kazamachi] VRCFuryが見つかったため非表示PhysBoneの除外を無効にしました。");
             var controls = CreateRuntimeControlState(context);
             var icons = new MenuIcons();
             var generating = new List<GeneratingWind>();
             var spreadRoots = new List<string>();
             var allPhysBones = context.AvatarRootObject.GetComponentsInChildren<VRCPhysBoneBase>(true);
-            var exclusionCounts = new Dictionary<string, int>();
+            var exclusions = new Dictionary<string, List<string>>();
+            var ignoredPivots = new List<string>();
             var reservedCost = 0;
 
             for (var windIndex = 0; windIndex < settings.Length; windIndex++)
@@ -191,7 +193,7 @@ namespace TenteEEEE.Kazamachi.Editor
 
                 var targetInfos = new List<TargetInfo>();
                 var groupedTargets = ResolveTargets(wind, avatarRoot, animatorServices, hasVrcFury,
-                        hiddenPhysBones, exclusionCounts, ref skippedCount)
+                        hiddenPhysBones, exclusions, ref skippedCount)
                     .GroupBy(ResolveRoot)
                     .Where(group => group.Key != null)
                     .OrderBy(group => Depth(group.Key))
@@ -205,10 +207,7 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (!IsSafeRoot(root, avatarRoot, humanoidBones))
                     {
                         skippedCount++;
-                        CountExclusion(exclusionCounts, "unsafe");
-                        Debug.Log(
-                            "[Kazamachi] AvatarルートまたはHumanoid本体を動かすPhysBoneを安全のため除外しました: " +
-                            RelativePath(avatarRoot, root), wind);
+                        AddExclusion(exclusions, "unsafe", RelativePath(avatarRoot, root));
                         continue;
                     }
 
@@ -220,20 +219,14 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (IsInsideOtherChain(root, allPhysBones))
                     {
                         skippedCount++;
-                        CountExclusion(exclusionCounts, "inside-chain");
-                        Debug.Log(
-                            "[Kazamachi] 別のPhysBoneのチェーン内にあるrootを除外しました: " +
-                            RelativePath(avatarRoot, root), wind);
+                        AddExclusion(exclusions, "inside-chain", RelativePath(avatarRoot, root));
                         continue;
                     }
 
                     if (processedRoots.Any(existing => root.IsChildOf(existing) || existing.IsChildOf(root)))
                     {
                         skippedCount++;
-                        CountExclusion(exclusionCounts, "nested");
-                        Debug.Log(
-                            "[Kazamachi] 二重に風が掛かる入れ子PhysBoneルートを除外しました: " +
-                            RelativePath(avatarRoot, root), wind);
+                        AddExclusion(exclusions, "nested", RelativePath(avatarRoot, root));
                         continue;
                     }
 
@@ -263,15 +256,10 @@ namespace TenteEEEE.Kazamachi.Editor
             }
 
             if (spreadRoots.Count > 0)
-                Report(ErrorSeverity.NonFatal,
-                    "Spread-out roots use endpoint or avatar down. Consider Include Only on individual strands: " + string.Join(", ", spreadRoots),
-                    "子が広がったrootには末端方向またはアバターの下方向を使います。各毛束をInclude Onlyで指定することを検討してください: " + string.Join(", ", spreadRoots));
-            if (exclusionCounts.Count > 0)
             {
-                var byReason = string.Join(", ", exclusionCounts.Select(pair => pair.Key + "=" + pair.Value));
-                Report(ErrorSeverity.Information,
-                    "Excluded PhysBones/roots by reason: " + byReason,
-                    "除外数（理由別）: " + byReason);
+                Debug.LogWarning("[Kazamachi] Spread-out roots use endpoint or avatar down. Consider Include Only on individual strands: " +
+                    string.Join(", ", spreadRoots) + "\n[Kazamachi] 子が広がったrootには末端方向またはアバターの下方向を使います。各毛束をInclude Onlyで指定することを検討してください: " +
+                    string.Join(", ", spreadRoots));
             }
 
             foreach (var entry in generating)
@@ -302,8 +290,8 @@ namespace TenteEEEE.Kazamachi.Editor
                         if (physBone == null || physBone.ignoreTransforms == null ||
                             !physBone.ignoreTransforms.Contains(root)) continue;
                         physBone.ignoreTransforms.Add(pivot);
-                        Debug.Log("[Kazamachi] ignore対象のrootに挿入したpivotをPhysBoneのignoreにも追加しました: " +
-                            RelativePath(avatarRoot, physBone.transform) + " → " + RelativePath(avatarRoot, root), physBone);
+                        ignoredPivots.Add(RelativePath(avatarRoot, physBone.transform) + " → " +
+                            RelativePath(avatarRoot, root));
                     }
                     bakeTargets.Add(new WindTarget
                     {
@@ -350,17 +338,9 @@ namespace TenteEEEE.Kazamachi.Editor
             if (generatedLayerCount > 0)
             {
                 FinalizeRuntimeControls(context, controls);
-                var megabytes = EstimateMegabytes(stats.StoredKeys);
-                Report(ErrorSeverity.Information,
-                    "Wind added to " + processedRoots.Count + " PhysBone roots (" + skippedCount + " excluded). Animation data: about " + megabytes + " MB.",
-                    processedRoots.Count + " 個のPhysBone rootに風を追加しました（除外 " + skippedCount + "）。アニメーションデータの目安: 約 " + megabytes + " MB。");
             }
-            else
-            {
-                Report(ErrorSeverity.Information,
-                    "No PhysBone roots received wind (" + skippedCount + " excluded).",
-                    "風を追加したPhysBone rootはありません（除外 " + skippedCount + "）。");
-            }
+            var logContext = generating.Count > 0 ? generating[0].Wind : settings[0];
+            LogSummary(processedRoots.Count, skippedCount, stats, hasVrcFury, exclusions, ignoredPivots, logContext);
 
             Cleanup(allSettings, context.AvatarRootTransform);
         }
@@ -384,7 +364,7 @@ namespace TenteEEEE.Kazamachi.Editor
 
         private static IEnumerable<VRCPhysBoneBase> ResolveTargets(KazamachiWind wind, Transform avatarRoot,
             AnimatorServicesContext services, bool hasVrcFury, HashSet<VRCPhysBoneBase> hiddenPhysBones,
-            Dictionary<string, int> exclusionCounts,
+            Dictionary<string, List<string>> exclusions,
             ref int skippedCount)
         {
             IEnumerable<VRCPhysBoneBase> targets;
@@ -402,13 +382,12 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (pb == null) continue;
                     if (excluded.Contains(pb))
                     {
-                        CountExclusion(exclusionCounts, "explicit");
+                        AddExclusion(exclusions, "explicit", RelativePath(avatarRoot, pb.transform));
                         skippedCount++;
-                        Debug.Log("[Kazamachi] 指定により除外: " + RelativePath(avatarRoot, pb.transform), pb);
                         continue;
                     }
                     if (wind.targetSelection == KazamachiWind.TargetSelection.Auto &&
-                        IsAutoExcluded(pb, wind, avatarRoot, exclusionCounts))
+                        IsAutoExcluded(pb, wind, avatarRoot, exclusions))
                     {
                         skippedCount++;
                         continue;
@@ -427,9 +406,8 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (!IsNeverActive(pb, avatarRoot, services)) continue;
                     if (hiddenPhysBones.Add(pb))
                     {
-                        Debug.Log("[Kazamachi] 常に非表示のため除外: " + RelativePath(avatarRoot, pb.transform), pb);
                         skippedCount++;
-                        CountExclusion(exclusionCounts, "hidden");
+                        AddExclusion(exclusions, "hidden", RelativePath(avatarRoot, pb.transform));
                     }
                     result.Remove(pb);
                 }
@@ -491,17 +469,70 @@ namespace TenteEEEE.Kazamachi.Editor
             return (storedKeys * BytesPerStoredKey / 1000000.0).ToString("F1");
         }
 
-        private static void CountExclusion(Dictionary<string, int> counts, string reason)
+        private static void AddExclusion(Dictionary<string, List<string>> exclusions, string reason, string path)
         {
-            int count;
-            counts.TryGetValue(reason, out count);
-            counts[reason] = count + 1;
+            List<string> items;
+            if (!exclusions.TryGetValue(reason, out items))
+            {
+                items = new List<string>();
+                exclusions.Add(reason, items);
+            }
+            items.Add(path);
+        }
+
+        private static void LogSummary(int rootCount, int skippedCount, BakeStats stats, bool hasVrcFury,
+            Dictionary<string, List<string>> exclusions, List<string> ignoredPivots, Object logContext)
+        {
+            var megabytes = EstimateMegabytes(stats.StoredKeys);
+            var lines = new List<string>
+            {
+                "[Kazamachi] Wind added to " + rootCount + " PhysBone roots (" + skippedCount +
+                    " excluded). Animation data: about " + megabytes + " MB uncompressed.",
+                "[Kazamachi] " + rootCount + " 個のPhysBone rootに風を追加しました（除外 " + skippedCount +
+                    "）。アニメーションデータの目安: 約 " + megabytes + " MB（非圧縮）。"
+            };
+            if (hasVrcFury)
+            {
+                lines.Add("[Kazamachi] VRCFuryが見つかったため非表示PhysBoneの除外を無効にしました。");
+            }
+            var reasons = new[] { "unsafe", "explicit", "keyword", "hidden", "inside-chain", "nested" };
+            if (exclusions.Count > 0)
+            {
+                lines.Add("除外（理由別）: " + string.Join(", ", reasons.Where(exclusions.ContainsKey)
+                    .Select(reason => reason + "=" + exclusions[reason].Count)));
+                foreach (var reason in reasons)
+                {
+                    List<string> items;
+                    if (!exclusions.TryGetValue(reason, out items)) continue;
+                    foreach (var item in items)
+                    {
+                        lines.Add("  - " + reason + ": " + item);
+                    }
+                }
+            }
+            if (ignoredPivots.Count > 0)
+            {
+                lines.Add("Ignore Transformsにpivotを追加:");
+                foreach (var item in ignoredPivots)
+                {
+                    lines.Add("  - " + item);
+                }
+            }
+            var message = string.Join("\n", lines);
+            if (rootCount > 0)
+            {
+                Debug.Log(message, logContext);
+            }
+            else
+            {
+                Debug.LogWarning(message, logContext);
+            }
         }
 
         // Auto only looks at the component's own GameObject and its root. Walking up the
         // hierarchy would also catch accessories parented under a breast bone.
         private static bool IsAutoExcluded(VRCPhysBoneBase physBone, KazamachiWind wind, Transform avatarRoot,
-            Dictionary<string, int> exclusionCounts)
+            Dictionary<string, List<string>> exclusions)
         {
             if (wind.autoExcludeNameKeywords == null) return false;
             var names = new[] { physBone.gameObject.name, ResolveRoot(physBone)?.name ?? string.Empty };
@@ -511,9 +542,8 @@ namespace TenteEEEE.Kazamachi.Editor
                 foreach (var name in names)
                 {
                     if (name.IndexOf(keyword.Trim(), StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    Debug.Log("[Kazamachi] Auto除外: " + RelativePath(avatarRoot, physBone.transform) +
-                              " (キーワード '" + keyword + "')", physBone);
-                    CountExclusion(exclusionCounts, "keyword");
+                    AddExclusion(exclusions, "keyword", RelativePath(avatarRoot, physBone.transform) +
+                        "（キーワード '" + keyword + "'）");
                     return true;
                 }
             }
@@ -757,7 +787,9 @@ namespace TenteEEEE.Kazamachi.Editor
             clip.WrapMode = WrapMode.Loop;
             var clipSettings = clip.Settings;
             clipSettings.loopTime = true;
-            clipSettings.loopBlend = true;
+            // No Loop Pose: the curves already end where they start, so it changes nothing and
+            // made Animator evaluation about 2.6x slower in a 136-root measurement.
+            clipSettings.loopBlend = false;
             clip.Settings = clipSettings;
         }
 
