@@ -54,11 +54,8 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
             var leanAngle = Mathf.Clamp(settings.MaxLeanAngle * leanUnits, 0f, 80f) * Mathf.Deg2Rad;
             return new Sample { VariedDirection = variedDirection, WindForce = Mathf.Tan(leanAngle) };
         }
+        /// <summary>Returns the pivot rotation in the root's parent space.</summary>
         public Quaternion Evaluate(WindTarget target, Sample sample)
-        {
-            return EvaluatePivot(target, sample) * target.LocalRotation;
-        }
-        public Quaternion EvaluatePivot(WindTarget target, Sample sample)
         {
             var restDirectionAvatar = target.RestDirection;
             var variedDirection = sample.VariedDirection;
@@ -87,7 +84,6 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
             var windRotationParent = Quaternion.Inverse(target.ParentRotation) * windRotationAvatar * target.ParentRotation;
             return windRotationParent;
         }
-        public Quaternion Evaluate(WindTarget target, float time) { return Evaluate(target, At(time)); }
         private static float PeriodicNoise(float time, int seed, int baseCycles)
         {
             var value = 0f;

@@ -59,6 +59,8 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 - 入れ子になって二重に風が掛かるroot
 - 別のPhysBoneのチェーンの途中にあるroot（pivotを挿入するとそのチェーンの物理が変わるため）
 
+別のPhysBoneの `Ignore Transforms` に指定されたrootは対象に残し、ビルド時に挿入したpivotも同じ `Ignore Transforms` に追加します。元のアバターは変更しません。
+
 同じrootを使う複数のPhysBoneは、1つにまとめて処理します。
 
 ## 仕組みと制約
@@ -71,7 +73,7 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 - パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。複数のコンポーネントが生成される場合は、レイヤー、メニュー、パラメータに対応する番号が付きます。
 - 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。上限を超える場合はその風の生成をスキップし、NDMFのレポートに必要量と空き容量を表示します。
 - Pullが強い、Immobileが高い、角度制限が小さい、といったPhysBoneでは風が弱く見えます。
-- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.25°以内に収まるよう自動で間引かれます。ビルド後のNDMFの表示に、風を追加したroot数、除外数、アニメーションデータの目安サイズ（非圧縮）が出ます。
+- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.5°以内に収まるよう自動で間引かれます。ビルド後のNDMFの表示に、風を追加したroot数、除外数、アニメーションデータの目安サイズ（非圧縮）が出ます。
 
 ## 推奨の確認手順
 

@@ -1,6 +1,6 @@
 # Kazamachi
 
-A photo-friendly breeze-to-storm wind system for VRChat avatars. Kazamachi animates PhysBone roots through looping FX Animator clips generated at build time.
+A photo-friendly breeze-to-storm wind system for VRChat avatars. Kazamachi animates a pivot inserted above each PhysBone root through looping FX Animator clips generated at build time.
 
 ## Install and quick start
 

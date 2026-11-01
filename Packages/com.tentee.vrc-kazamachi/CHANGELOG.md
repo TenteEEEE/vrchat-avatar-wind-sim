@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Fix: a root listed in another PhysBone's Ignore Transforms got no wind and changed that chain; the inserted pivot is now added to the same Ignore Transforms.
+- Internal cleanup: removed the unused root-rotation bake path; no change to generated animations.
+- Store pivot rotations as Euler angles (three curves instead of four) and use a 0.5° key tolerance. Together these reduce animation data by about 35% at default settings (8.0 to 5.2 MB LZMA in a 136-root measurement). No settings changes or migration are required.
+
 ## 0.3.1
 
 - Animate an inserted pivot above each PhysBone root, preserving existing root animations without changing Is Animated. Removed Skip Animated Roots.

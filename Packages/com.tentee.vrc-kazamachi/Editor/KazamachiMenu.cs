@@ -1,6 +1,5 @@
 using UnityEditor;
 using UnityEngine;
-using TenteEEEE.Kazamachi;
 
 namespace TenteEEEE.Kazamachi.Editor
 {

@@ -8,6 +8,5 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
         public string Path;
         public Vector3 RestDirection;
         public Quaternion ParentRotation;
-        public Quaternion LocalRotation;
     }
 }

@@ -11,6 +11,7 @@ public static class BakeCheck
     private sealed class Result
     {
         public string config;
+        public string format;
         public float tolerance;
         public double bakeMilliseconds;
         public int direction, elevation, turbulence, target;
@@ -23,6 +24,7 @@ public static class BakeCheck
     {
         public double maxComponentDelta, newMaxAngle, legacyMaxAngle;
         public double pivotSamplerDelta, pivotLegacyDelta;
+        public bool eulerFailed;
         public long newKeys, legacyKeys;
         public List<Result> cases = new List<Result>();
         public List<Summary> summaries = new List<Summary>();
@@ -31,6 +33,7 @@ public static class BakeCheck
     private sealed class Summary
     {
         public string config;
+        public string format;
         public float tolerance;
         public int turbulence;
         public long newKeys;
@@ -39,9 +42,9 @@ public static class BakeCheck
         public double legacyMaxAngle;
         public double bakeMilliseconds;
     }
-    private static WindTarget Target(Vector3 rest, Quaternion parent, Quaternion local, string path)
+    private static WindTarget Target(Vector3 rest, Quaternion parent, string path)
     {
-        return new WindTarget { RestDirection = rest.normalized, ParentRotation = parent, LocalRotation = local, Path = path };
+        return new WindTarget { RestDirection = rest.normalized, ParentRotation = parent, Path = path };
     }
     private static double Angle(Quaternion a, Quaternion b)
     {
@@ -72,12 +75,21 @@ public static class BakeCheck
         {
             var targets = new List<WindTarget>
             {
-                Target(Vector3.down, Quaternion.identity, Quaternion.identity, "down"),
-                Target(new Vector3(0, -1, 1), Quaternion.Euler(10, 45, 20), Quaternion.Euler(15, 0, 10), "forward"),
-                Target(Vector3.right, Quaternion.Euler(0, 80, 35), Quaternion.Euler(0, 20, 0), "tail"),
-                Target(new Vector3(.2f, 1, .1f), Quaternion.Euler(20, -30, 15), Quaternion.Euler(5, 5, 5), "ear"),
-                Target(Vector3.down, Quaternion.Euler(30, 40, 50), Quaternion.Euler(0, 0, 179.999f), "halfturn"),
-                Target(new Vector3(-1, -.3f, .2f), Quaternion.Euler(-40, 22, 8), Quaternion.Euler(25, 60, -10), "side")
+                Target(Vector3.down, Quaternion.identity, "down"),
+                Target(new Vector3(0, -1, 1), Quaternion.Euler(10, 45, 20), "forward"),
+                Target(Vector3.right, Quaternion.Euler(0, 80, 35), "tail"),
+                Target(new Vector3(.2f, 1, .1f), Quaternion.Euler(20, -30, 15), "ear"),
+                Target(Vector3.down, Quaternion.Euler(30, 40, 50), "halfturn"),
+                Target(new Vector3(-1, -.3f, .2f), Quaternion.Euler(-40, 22, 8), "side")
+            };
+            var localRotations = new[]
+            {
+                Quaternion.identity,
+                Quaternion.Euler(15, 0, 10),
+                Quaternion.Euler(0, 20, 0),
+                Quaternion.Euler(5, 5, 5),
+                Quaternion.Euler(0, 0, 179.999f),
+                Quaternion.Euler(25, 60, -10)
             };
             var names = new[] { "defaults", "no gust", "maximum lean and gust", "long high rate", "short low rate", "maximum speed" };
             var settings = new[]
@@ -90,12 +102,13 @@ public static class BakeCheck
                 WindBakeSettings.Create(8, 30, 45, 45, 1, .3f, 1987, 60)
             };
             var report = new Report();
-            var tolerances = new[] { 0.1f, 0.25f, 0.5f };
+            var tolerances = new[] { 0.25f, 0.5f, 1.0f };
             for (int c = 0; c < settings.Length; c++)
             foreach (float tolerance in tolerances)
             for (int turbulence = 0; turbulence <= 1; turbulence++)
+            foreach (var format in new[] { RotationCurveFormat.Quaternion, RotationCurveFormat.Euler })
             {
-            var summary = new Summary { config = names[c], tolerance = tolerance, turbulence = turbulence };
+            var summary = new Summary { config = names[c], format = format.ToString(), tolerance = tolerance, turbulence = turbulence };
             for (int d = 0; d < 8; d++)
             for (int e = -1; e <= 1; e++)
             {
@@ -105,36 +118,41 @@ public static class BakeCheck
                 float elevation = e * setting.MaxElevation;
                 var sampler = new WindSampler(setting, direction, elevation, turbulence);
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                var baked = WindClipBaker.Bake(setting, targets, direction, elevation, turbulence, tolerance);
+                var baked = WindClipBaker.Bake(setting, targets, direction, elevation, turbulence, tolerance, format: format);
                 watch.Stop();
                 summary.bakeMilliseconds += watch.Elapsed.TotalMilliseconds;
                 if (d == 0 && e == 0 && c < 3)
                 {
                     int count = setting.SampleCount * WindClipBaker.Oversample;
                     var samples = new Quaternion[count];
-                    for (int i = 0; i < count; i++) samples[i] = sampler.Evaluate(targets[0], (float)i / count);
-                    var naive = CurveReducer.SelectKeys(samples, setting.Duration, tolerance, false);
-                    var cached = CurveReducer.SelectKeys(samples, setting.Duration, tolerance, true);
+                    for (int i = 0; i < count; i++)
+                    {
+                        var time = (float)i / count;
+                        samples[i] = sampler.Evaluate(targets[0], sampler.At(time));
+                    }
+                    var naive = CurveReducer.SelectKeys(samples, setting.Duration, tolerance, false, format);
+                    var cached = CurveReducer.SelectKeys(samples, setting.Duration, tolerance, true, format);
                     if (naive.Count != cached.Count) throw new Exception("Reducer key count differs from naive greedy");
                     for (int i = 0; i < naive.Count; i++)
                         if (naive[i] != cached[i]) throw new Exception("Reducer keys differ from naive greedy");
                 }
                 for (int t = 0; t < targets.Count; t++)
                 {
-                    var legacy = LegacySampler.BuildCurves(targets[t], setting, direction, elevation, turbulence);
+                    var legacy = LegacySampler.BuildCurves(targets[t], localRotations[t], setting, direction, elevation, turbulence);
                     var curves = baked[t].Curves;
-                    var result = new Result { config = names[c], direction = d, elevation = e, turbulence = turbulence, target = t,
+                    var result = new Result { config = names[c], format = format.ToString(), direction = d, elevation = e, turbulence = turbulence, target = t,
                         tolerance = tolerance, bakeMilliseconds = watch.Elapsed.TotalMilliseconds,
-                        newKeys = baked[t].KeyCount * 4, legacyKeys = legacy[0].length * 4 };
+                        newKeys = baked[t].StoredKeys, legacyKeys = legacy[0].length * 4 };
                     for (int i = 0; i < setting.SampleCount * 8; i++)
                     {
                         float normalizedTime = (float)i / (setting.SampleCount * 8);
-                        var truth = sampler.Evaluate(targets[t], normalizedTime);
-                        var pivot = sampler.EvaluatePivot(targets[t], sampler.At(normalizedTime)) * targets[t].LocalRotation;
+                        var pivotRotation = sampler.Evaluate(targets[t], sampler.At(normalizedTime));
+                        var truth = pivotRotation * localRotations[t];
+                        var pivot = sampler.Evaluate(targets[t], sampler.At(normalizedTime)) * localRotations[t];
                         report.pivotSamplerDelta = Math.Max(report.pivotSamplerDelta, ComponentDelta(pivot, truth));
                         if (i % 8 == 0)
                         {
-                            var old = LegacySampler.CalculateRotation(targets[t], setting, normalizedTime, direction, elevation, turbulence);
+                            var old = LegacySampler.CalculateRotation(targets[t], localRotations[t], setting, normalizedTime, direction, elevation, turbulence);
                             report.pivotLegacyDelta = Math.Max(report.pivotLegacyDelta, ComponentDelta(pivot, old));
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.x - old.x));
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.y - old.y));
@@ -142,11 +160,20 @@ public static class BakeCheck
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.w - old.w));
                         }
                         float time = setting.Duration * normalizedTime;
-                        result.newMaxAngle = Math.Max(result.newMaxAngle, Angle(truth, Evaluate(curves, time)));
+                        var expected = pivotRotation;
+                        var actual = format == RotationCurveFormat.Euler
+                            ? Quaternion.Euler(curves[0].Evaluate(time), curves[1].Evaluate(time), curves[2].Evaluate(time))
+                            : Evaluate(curves, time);
+                        var error = Angle(expected, actual);
+                        result.newMaxAngle = Math.Max(result.newMaxAngle, error);
+                        if (format == RotationCurveFormat.Euler && i % 2 == 0 && error > tolerance + 1e-3)
+                            report.eulerFailed = true;
                         result.legacyMaxAngle = Math.Max(result.legacyMaxAngle, Angle(truth, Evaluate(legacy, time)));
                     }
                     Seam(curves, setting.Duration, out result.newSeamValue, out result.newSeamSlope);
                     Seam(legacy, setting.Duration, out result.legacySeamValue, out result.legacySeamSlope);
+                    if (format == RotationCurveFormat.Euler && result.newSeamValue > 1e-4)
+                        report.eulerFailed = true;
                     report.maxComponentDelta = Math.Max(report.maxComponentDelta, result.maxComponentDelta);
                     report.newMaxAngle = Math.Max(report.newMaxAngle, result.newMaxAngle);
                     report.legacyMaxAngle = Math.Max(report.legacyMaxAngle, result.legacyMaxAngle);
@@ -161,10 +188,10 @@ public static class BakeCheck
             }
             report.summaries.Add(summary);
             }
-            var table = new System.Text.StringBuilder("BakeCheck: config | tolerance | turbulence | keys% | maxErr new | maxErr legacy | bake ms\n");
+            var table = new System.Text.StringBuilder("BakeCheck: config | tolerance | turbulence | format | keys% | maxErr new | maxErr legacy | bake ms\n");
             foreach (var row in report.summaries)
-                table.AppendFormat("{0} | {1:F2} | {2} | {3:F1}% | {4:F3} | {5:F3} | {6:F1}\n",
-                    row.config, row.tolerance, row.turbulence, 100.0 * row.newKeys / row.legacyKeys,
+                table.AppendFormat("{0} | {1:F2} | {2} | {3} | {4:F1}% | {5:F3} | {6:F3} | {7:F1}\n",
+                    row.config, row.tolerance, row.turbulence, row.format, 100.0 * row.newKeys / row.legacyKeys,
                     row.newMaxAngle, row.legacyMaxAngle, row.bakeMilliseconds);
             Debug.Log(table.ToString());
             string output = "_work/bake-report.json";
@@ -178,7 +205,7 @@ public static class BakeCheck
                 report.newMaxAngle + "/" + report.legacyMaxAngle + ", keys new/legacy " + report.newKeys + "/" + report.legacyKeys);
             Debug.Log("BakeCheck: pivot vs sampler/legacy " + report.pivotSamplerDelta + "/" + report.pivotLegacyDelta);
             EditorApplication.Exit(report.maxComponentDelta > 1e-6 || report.pivotSamplerDelta > 1e-6 ||
-                report.pivotLegacyDelta > 1e-6 ? 1 : 0);
+                report.pivotLegacyDelta > 1e-6 || report.eulerFailed ? 1 : 0);
         }
         catch (Exception exception)
         {

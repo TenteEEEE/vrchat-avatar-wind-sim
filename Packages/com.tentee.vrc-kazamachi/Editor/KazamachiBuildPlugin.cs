@@ -21,10 +21,6 @@ namespace TenteEEEE.Kazamachi.Editor
 {
     public sealed class KazamachiBuildPlugin : Plugin<KazamachiBuildPlugin>
     {
-        private static readonly string[] LocalRotationProperties =
-        {
-            "m_LocalRotation.x", "m_LocalRotation.y", "m_LocalRotation.z", "m_LocalRotation.w"
-        };
         private const float MinRestCoherence = 0.3f;
         // Messages carry English and Japanese in the title itself, so the localizer is an identity table.
         private static readonly Localizer Messages = new Localizer("en-US", () =>
@@ -65,7 +61,6 @@ namespace TenteEEEE.Kazamachi.Editor
         private const string ElevationIconGuid = "6357f96426374d3bab0507aaed990cda";
         private sealed class BakeStats
         {
-            public int Clips;
             public long StoredKeys;
 
         }
@@ -111,7 +106,6 @@ namespace TenteEEEE.Kazamachi.Editor
 
         private sealed class TargetInfo
         {
-            public string Path;
             public Transform Root;
             public Vector3 RestDirection;
         }
@@ -195,7 +189,6 @@ namespace TenteEEEE.Kazamachi.Editor
                     continue;
                 }
 
-                var settingRootCount = 0;
                 var targetInfos = new List<TargetInfo>();
                 var groupedTargets = ResolveTargets(wind, avatarRoot, animatorServices, hasVrcFury,
                         hiddenPhysBones, exclusionCounts, ref skippedCount)
@@ -255,10 +248,9 @@ namespace TenteEEEE.Kazamachi.Editor
                     });
 
                     processedRoots.Add(root);
-                    settingRootCount++;
                 }
 
-                if (settingRootCount > 0)
+                if (targetInfos.Count > 0)
                 {
                     generating.Add(new GeneratingWind { Wind = wind, Targets = targetInfos });
                     reservedCost += needed;
@@ -286,6 +278,7 @@ namespace TenteEEEE.Kazamachi.Editor
             {
                 var wind = entry.Wind;
                 var targetInfos = entry.Targets;
+                var bakeTargets = new List<WindTarget>();
                 foreach (var target in targetInfos)
                 {
                     var root = target.Root;
@@ -302,7 +295,22 @@ namespace TenteEEEE.Kazamachi.Editor
                     // scaled parent sees exactly the same root and descendant world matrices.
                     root.SetParent(pivot, false);
                     root.localPosition = Vector3.zero;
-                    target.Path = animatorServices.ObjectPathRemapper.GetVirtualPathForObject(pivot);
+                    // This modifies only the build clone, not the source avatar. Ignoring the
+                    // root alone is no longer enough: the pivot is now a child of the chain's bone.
+                    foreach (var physBone in allPhysBones)
+                    {
+                        if (physBone == null || physBone.ignoreTransforms == null ||
+                            !physBone.ignoreTransforms.Contains(root)) continue;
+                        physBone.ignoreTransforms.Add(pivot);
+                        Debug.Log("[Kazamachi] ignore対象のrootに挿入したpivotをPhysBoneのignoreにも追加しました: " +
+                            RelativePath(avatarRoot, physBone.transform) + " → " + RelativePath(avatarRoot, root), physBone);
+                    }
+                    bakeTargets.Add(new WindTarget
+                    {
+                        Path = animatorServices.ObjectPathRemapper.GetVirtualPathForObject(pivot),
+                        RestDirection = target.RestDirection,
+                        ParentRotation = Quaternion.Inverse(avatarRoot.rotation) * root.parent.parent.rotation
+                    });
                 }
                 var number = generating.Count == 1 ? "" : (generatedLayerCount + 1).ToString();
                 var suffix = number.Length == 0 ? "" : " " + number;
@@ -314,13 +322,6 @@ namespace TenteEEEE.Kazamachi.Editor
                 if (values.Elevation != null) AddAnimatorParameter(fx, values.Elevation, values.StartElevation);
 
                 var bakeSettings = CreateBakeSettings(wind);
-                var bakeTargets = targetInfos.Select(target => new WindTarget
-                {
-                    Path = target.Path,
-                    RestDirection = target.RestDirection,
-                    ParentRotation = Quaternion.Inverse(avatarRoot.rotation) * target.Root.parent.parent.rotation,
-                    LocalRotation = target.Root.localRotation
-                }).ToList();
                 var neutral = CreateNeutralClip(bakeTargets, bakeSettings, stats, "Wind Neutral" + suffix);
                 var motion = CreateRuntimeMotion(bakeTargets, bakeSettings, stats, neutral, values, suffix);
                 var layer = fx.AddLayer(LayerPriority.Default, values.Name);
@@ -456,10 +457,9 @@ namespace TenteEEEE.Kazamachi.Editor
             return false;
         }
 
-        // Auto only looks at the component's own GameObject and its root. Walking up the
-        // hierarchy would also catch accessories parented under a breast bone.
         // True when root is a simulated bone of a PhysBone it does not start, e.g. a strand root
-        // under an excluded parent chain. A pivot there would add a bone to that chain.
+        // under an excluded parent chain. A pivot there would add a bone to that chain. An ignored
+        // root is safe because its inserted pivot is also added to that PhysBone's ignore list.
         private static bool IsInsideOtherChain(Transform root, IEnumerable<VRCPhysBoneBase> physBones)
         {
             foreach (var physBone in physBones)
@@ -483,8 +483,8 @@ namespace TenteEEEE.Kazamachi.Editor
         }
 
         // Built (uncompressed) size per stored key, measured with AssetBundle builds of baked
-        // Kazamachi clips in Unity 2022.3 (about 20.7 bytes). Download size is smaller after LZMA.
-        private const double BytesPerStoredKey = 20.7;
+        // Kazamachi clips: 20.7 bytes for quaternion and 20.9 for Euler. LZMA is smaller.
+        private const double BytesPerStoredKey = 20.8;
 
         private static string EstimateMegabytes(long storedKeys)
         {
@@ -498,6 +498,8 @@ namespace TenteEEEE.Kazamachi.Editor
             counts[reason] = count + 1;
         }
 
+        // Auto only looks at the component's own GameObject and its root. Walking up the
+        // hierarchy would also catch accessories parented under a breast bone.
         private static bool IsAutoExcluded(VRCPhysBoneBase physBone, KazamachiWind wind, Transform avatarRoot,
             Dictionary<string, int> exclusionCounts)
         {
@@ -722,27 +724,26 @@ namespace TenteEEEE.Kazamachi.Editor
             BakeStats stats, Vector3 direction, float elevationDegrees, float turbulence, string name)
         {
             return CreateBakedClip(WindClipBaker.Bake(settings, targets, direction, elevationDegrees, turbulence,
-                    CurveReducer.DefaultToleranceDegrees, true),
+                    CurveReducer.DefaultToleranceDegrees, format: RotationCurveFormat.Euler),
                 settings, stats, name);
         }
 
         private static VirtualClip CreateNeutralClip(IList<WindTarget> targets, WindBakeSettings settings,
             BakeStats stats, string name)
         {
-            return CreateBakedClip(WindClipBaker.BakeNeutral(settings, targets, true), settings, stats, name);
+            return CreateBakedClip(WindClipBaker.BakeNeutral(settings, targets, format: RotationCurveFormat.Euler), settings, stats, name);
         }
 
         private static VirtualClip CreateBakedClip(IList<BakedTarget> targets, WindBakeSettings settings,
             BakeStats stats, string name)
         {
             var clip = VirtualClip.Create(name);
-            stats.Clips++;
             foreach (var target in targets)
             {
-                stats.StoredKeys += target.KeyCount * 4L;
-                for (var i = 0; i < 4; i++)
+                stats.StoredKeys += target.StoredKeys;
+                for (var i = 0; i < target.Curves.Length; i++)
                 {
-                    var binding = EditorCurveBinding.FloatCurve(target.Path, typeof(Transform), LocalRotationProperties[i]);
+                    var binding = EditorCurveBinding.FloatCurve(target.Path, typeof(Transform), target.Properties[i]);
                     clip.SetFloatCurve(binding, target.Curves[i]);
                 }
             }
@@ -766,14 +767,15 @@ namespace TenteEEEE.Kazamachi.Editor
             float value,
             AnimatorControllerParameterType type = AnimatorControllerParameterType.Float)
         {
-            controller.SetParameter(name, new AnimatorControllerParameter
+            var parameter = new AnimatorControllerParameter
             {
                 name = name,
-                type = type,
-                defaultFloat = value,
-                defaultInt = Mathf.RoundToInt(value),
-                defaultBool = value >= 0.5f
-            });
+                type = type
+            };
+            if (type == AnimatorControllerParameterType.Float) parameter.defaultFloat = value;
+            else if (type == AnimatorControllerParameterType.Int) parameter.defaultInt = Mathf.RoundToInt(value);
+            else if (type == AnimatorControllerParameterType.Bool) parameter.defaultBool = value >= 0.5f;
+            controller.SetParameter(name, parameter);
         }
 
         private static Texture2D LoadIcon(string guid)

@@ -5,7 +5,7 @@ using TenteEEEE.Kazamachi.Editor.Baking;
 // Copied from 0.2.0; only Transform/settings inputs are replaced with plain values.
 public static class LegacySampler
 {
-        public static Quaternion CalculateRotation(WindTarget target, WindBakeSettings wind, float time,
+        public static Quaternion CalculateRotation(WindTarget target, Quaternion localRotation, WindBakeSettings wind, float time,
             Vector3 directionOverride, float elevationDegrees, float turbulence)
         {
             var restDirectionAvatar = target.RestDirection;
@@ -61,7 +61,7 @@ public static class LegacySampler
             var windRotationAvatar = Quaternion.FromToRotation(restDirectionAvatar, desiredDirection);
             var parentInAvatar = target.ParentRotation;
             var windRotationParent = Quaternion.Inverse(parentInAvatar) * windRotationAvatar * parentInAvatar;
-            return windRotationParent * target.LocalRotation;
+            return windRotationParent * localRotation;
         }
 
         private static float PeriodicNoise(float time, int seed, int baseCycles)
@@ -100,7 +100,7 @@ public static class LegacySampler
             var maxBaseCycles = Mathf.Max(1, Mathf.FloorToInt(sampleRate * duration / 16f));
             return Mathf.Min(requestedCycles, maxBaseCycles);
         }
-    public static AnimationCurve[] BuildCurves(WindTarget target, WindBakeSettings wind,
+    public static AnimationCurve[] BuildCurves(WindTarget target, Quaternion localRotation, WindBakeSettings wind,
         Vector3 direction, float elevation, float turbulence)
     {
         int samples = wind.SampleCount;
@@ -110,7 +110,7 @@ public static class LegacySampler
         for (var i = 0; i <= samples; i++)
         {
             var normalizedTime = i == samples ? 0f : (float)i / samples;
-            var quaternion = CalculateRotation(target, wind, normalizedTime, direction, elevation, turbulence);
+            var quaternion = CalculateRotation(target, localRotation, wind, normalizedTime, direction, elevation, turbulence);
             if (i == 0) first = quaternion;
             if (i == samples) quaternion = first;
             if (i > 0 && Quaternion.Dot(previous, quaternion) < 0f)
