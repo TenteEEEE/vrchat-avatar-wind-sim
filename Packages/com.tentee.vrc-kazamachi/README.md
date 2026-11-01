@@ -31,13 +31,14 @@ Inspectorの項目名は英語です。マウスオーバーで日本語の説�
 | Inspector | 既定値 | 説明 |
 |---|---|---|
 | Initial Direction / Strength / Turbulence | 90° / 0.35 / 0.35 | 各ラジアルの初期値 |
-| Vertical Control | ON | 上下ラジアルを追加します。生成クリップ数は17→49に増えます |
+| Vertical Control | OFF | 上下ラジアルを追加します。生成クリップ数は17→49に増えます |
+| Skip Hidden PhysBones | ON | 有効化アニメーションのない非表示GameObjectや無効なPhysBoneを除外します。VRCFuryがある場合は判定を無効にします（Include Onlyには適用しません） |
 | Max Elevation Angle | 60° | 上下ラジアル端での風の仰角 |
 | Max Wind Speed (m/s) | 22.5（0〜45） | 強さ1のときの揺れの速さ |
 | Max Lean Angle (deg) | 45（0〜60） | 強さ1のときの基準傾斜角 |
 | Gust Strength | 1（0〜1.5） | 突風ピークの倍率 |
 | Gust Frequency (/s) | 0.3 | 強さ1のときの突風回数 |
-| Advanced: Loop Duration / Sample Rate / Seed | 8秒 / 30 / 1987 | ループ長、サンプル数、揺れ方のパターン |
+| Advanced: Loop Duration / Sample Rate / Seed | 8秒 / 30 / 1987 | ループ長、解析解像度の基準、揺れ方のパターン。Sample Rateを上げると速い揺れをより正確に表現できます。実際の解析は4倍の密度で行い、保存キーは自動的に削減されます |
 
 傾きの構成は「定常風55% + 突風45% × Gust Strength」です。
 Gust Strength 1の突風ピークで、ちょうどMax Lean Angleに達します。
@@ -64,11 +65,11 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 
 - PhysBoneに外力を与える機能ではありません。PhysBone rootの回転をループアニメーションで動かし、`isAnimated` を有効にします。PhysBoneの慣性・Spring・Pullがその動きに反応します。
 - 全クリップを「強さ1の暴風」で生成します。実行時はStrengthに応じて振幅と再生速度を落とします。
-- Write Defaultsは、アバターのFXレイヤーの多数派に合わせます。
-- パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。
+- Write Defaultsは、アバターのFXレイヤーがすべてWD ONならON、それ以外（OFFのみ・混在・判定対象なし）はOFFにします。AdditiveレイヤーとDirect Blend Treeだけのレイヤーは判定から除きます。
+- パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。複数のコンポーネントが生成される場合は、レイヤー、メニュー、パラメータに対応する番号が付きます。
 - 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。パラメータ上限256bitに近いアバターでは注意してください。
 - Pullが強い、Immobileが高い、角度制限が小さい、といったPhysBoneでは風が弱く見えます。
-- 生成データが重い場合は、`Vertical Control` をOFFにするか、Sample RateまたはLoop Durationを下げてください。ビルドログに生成クリップ数と合計キー数が表示されます。
+- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.25°以内に収まるよう自動で間引かれます。ビルドログに対象ルート数、除外数、生成クリップ数、保存キー数、0.2.0で同じ設定だった場合のキー数とその割合が表示されます。
 
 ## 推奨の確認手順
 

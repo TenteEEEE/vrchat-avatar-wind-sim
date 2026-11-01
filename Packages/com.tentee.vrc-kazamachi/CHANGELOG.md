@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Reduce stored animation keys with an error-bounded curve fit (0.25° at analysis samples; about a quarter of 0.2.0 at default settings).
+- Disable Vertical Control by default.
+- Skip hidden PhysBones that cannot be activated; VRCFury disables this check.
+- Sample Rate controls analysis resolution and the flutter speed cap; stored keys are reduced automatically.
+- Show stored key counts and the 0.2.0-equivalent count in the build log.
+- Number layers, menus, parameters, clips and trees consistently for multiple generating components.
+- Correct the Write Defaults description in the manual (WD On only when every counted FX state is WD On).
+
 ## 0.2.0
 
 - **Breaking:** Remove Sync To Others and Start Enabled. Wind always starts OFF and menu operations are always synced to other players (33 bits per component, 25 without Elevation).

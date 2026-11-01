@@ -14,7 +14,7 @@ namespace TenteEEEE.Kazamachi
         {
             AllPhysBones,
             IncludeOnly,
-            // Appended so existing serialized values keep their meaning.
+            // Values are serialized; do not reorder.
             Auto
         }
 
@@ -31,8 +31,8 @@ namespace TenteEEEE.Kazamachi
         [Tooltip("アバター読み込み直後の揺らぎ量です。0で一定の風、1で最大の方向変化と強弱変化になります。")]
         public float initialTurbulence = 0.35f;
 
-        [Tooltip("Expression Menuに上下方向の操作を追加します。有効にすると生成クリップ数が17から49に増えます。")]
-        public bool verticalControl = true;
+        [Tooltip("Expression Menuに上下方向の操作を追加します。既定ではOFFです。有効にすると生成クリップ数が17から49に増えます。")]
+        public bool verticalControl = false;
 
         [Range(0f, 1f)]
         [Tooltip("アバター読み込み直後の上下方向です。0で下向き、0.5で水平、1で上向きになります。")]
@@ -65,15 +65,13 @@ namespace TenteEEEE.Kazamachi
         public float loopDuration = 8f;
 
         [Range(10, 60)]
-        [Tooltip("1秒あたりのアニメーションサンプル数です。高くすると速い揺れを表現できますが、生成データが増えます。")]
+        [Tooltip("解析解像度の基準です。高くすると速い揺れをより正確に表現でき、揺れの速さの上限も変わります。実際の解析は4倍の密度で行い、保存キーは自動的に削減されます。")]
         public int sampleRate = 30;
 
         [Tooltip("風の揺れ方を決める整数値です。同じ値と設定なら同じ周期パターンになり、変更すると別の揺れ方になります。")]
         public int seed = 1987;
 
         [Header("Targets")]
-        // Keep the enum values stable: existing Include Only components remain Include Only.
-        // Newly added components intentionally start with the convenient broad selection.
         [Tooltip("風を適用するPhysBoneの選択方法です。Autoは全体から名前キーワードを除外し、Include Onlyは指定したものだけを使います。")]
         public TargetSelection targetSelection = TargetSelection.Auto;
 
@@ -88,17 +86,11 @@ namespace TenteEEEE.Kazamachi
         [Tooltip("AutoまたはAll PhysBones選択時に、風の対象から外すPhysBoneを指定します（Include Onlyでは使いません）。")]
         public List<VRCPhysBoneBase> excludedPhysBones = new List<VRCPhysBoneBase>();
 
+        [Tooltip("非アクティブなGameObjectや無効なPhysBoneに有効化アニメーションがない場合、対象から除外します。VRCFuryがあるアバターでは判定を無効にします。Include Onlyでは適用しません。")]
+        public bool skipNeverActivePhysBones = true;
+
         [Tooltip("有効にすると既存アニメーションが回転を制御するPhysBone rootを除外し、アニメーション同士の競合を避けます。")]
         public bool skipRootsWithAnimation = true;
 
-        /// <summary>Returns the requested base cycles after the anti-aliasing cap.</summary>
-        public static int ComputeBaseCycles(
-            float maxWindSpeed, int sampleRate, float duration, out int requestedCycles)
-        {
-            requestedCycles = Mathf.Max(1, Mathf.RoundToInt(duration *
-                (0.12f + 0.045f * Mathf.Max(0f, maxWindSpeed))));
-            var maxBaseCycles = Mathf.Max(1, Mathf.FloorToInt(sampleRate * duration / 16f));
-            return Mathf.Min(requestedCycles, maxBaseCycles);
-        }
     }
 }
