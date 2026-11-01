@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- Animate an inserted pivot above each PhysBone root, preserving existing root animations without changing Is Animated. Removed Skip Animated Roots.
+- Fall back to the endpoint or avatar down when child directions are spread out.
+- Exclude roots that sit inside another PhysBone's chain (a pivot there would change that chain).
+- Skip winds that exceed the synced expression parameter budget.
+- Report build warnings, exclusions, and a bake summary (roots and estimated animation data size) through NDMF.
+
 ## 0.3.0
 
 - Reduce stored animation keys with an error-bounded curve fit (0.25° at analysis samples; about a quarter of 0.2.0 at default settings).

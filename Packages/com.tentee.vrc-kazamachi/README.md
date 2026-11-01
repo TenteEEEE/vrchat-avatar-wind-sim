@@ -1,7 +1,7 @@
 # Kazamachi（風待ち）
 
 VRChatアバターの既存PhysBoneに、撮影向けの「風」を加えるNDMFプラグインです。
-ビルド時にPhysBone rootを揺らすループアニメーションをFX Animatorへ生成し、Expression Menuから風向・強さ・揺らぎを操作できます。
+ビルド時にPhysBone rootの親にpivotを挿入して揺らすループアニメーションをFX Animatorへ生成し、Expression Menuから風向・強さ・揺らぎを操作できます。
 カスタムスクリプトはアップロードされません。風は常にOFFで開始します。メニュー操作は同期され、他のプレイヤーにも風が見えます。
 
 ## 導入
@@ -57,19 +57,21 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 どのモードでも、次のrootは安全のため自動で除外します。
 - Humanoidボーン本体とアバタールート
 - 入れ子になって二重に風が掛かるroot
-- 既存アニメーションが回転を動かしているroot（`Skip Animated Roots` ONのとき）
+- 別のPhysBoneのチェーンの途中にあるroot（pivotを挿入するとそのチェーンの物理が変わるため）
 
 同じrootを使う複数のPhysBoneは、1つにまとめて処理します。
 
 ## 仕組みと制約
 
-- PhysBoneに外力を与える機能ではありません。PhysBone rootの回転をループアニメーションで動かし、`isAnimated` を有効にします。PhysBoneの慣性・Spring・Pullがその動きに反応します。
+- PhysBoneに外力を与える機能ではありません。rootの直上に挿入したpivotをループアニメーションで動かし、PhysBoneの慣性・Spring・Pullが反応します。PhysBoneの `Is Animated` は変更せず、root自体の既存アニメーションとも競合しません。
+- 風向はPhysBone rootの親ボーンの向きを基準に焼き込むため、頭や体を回すと風向も一緒に回ります（アバター基準で固定されません）。
+- rootの子が四方に広がり方向が打ち消し合う場合は、PhysBoneのendpoint方向、未設定ならアバターの下方向を基準にします。各毛束を `Include Only` で指定することも検討してください。
 - 全クリップを「強さ1の暴風」で生成します。実行時はStrengthに応じて振幅と再生速度を落とします。
 - Write Defaultsは、アバターのFXレイヤーがすべてWD ONならON、それ以外（OFFのみ・混在・判定対象なし）はOFFにします。AdditiveレイヤーとDirect Blend Treeだけのレイヤーは判定から除きます。
 - パラメータは `TenteEEEE/Kazamachi/{Enabled,Direction,Strength,Turbulence,Elevation}` で、いずれも `saved=false`・同期ありです。複数のコンポーネントが生成される場合は、レイヤー、メニュー、パラメータに対応する番号が付きます。
-- 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。パラメータ上限256bitに近いアバターでは注意してください。
+- 同期ビット数はコンポーネント1個あたり33bit（Elevationなしは25bit）です。上限を超える場合はその風の生成をスキップし、NDMFのレポートに必要量と空き容量を表示します。
 - Pullが強い、Immobileが高い、角度制限が小さい、といったPhysBoneでは風が弱く見えます。
-- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.25°以内に収まるよう自動で間引かれます。ビルドログに対象ルート数、除外数、生成クリップ数、保存キー数、0.2.0で同じ設定だった場合のキー数とその割合が表示されます。
+- 生成データが重い場合は、`Vertical Control` をOFFにするか、Loop Durationを下げてください。キーは誤差0.25°以内に収まるよう自動で間引かれます。ビルド後のNDMFの表示に、風を追加したroot数、除外数、アニメーションデータの目安サイズ（非圧縮）が出ます。
 
 ## 推奨の確認手順
 

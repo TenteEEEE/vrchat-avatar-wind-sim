@@ -56,6 +56,10 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
         }
         public Quaternion Evaluate(WindTarget target, Sample sample)
         {
+            return EvaluatePivot(target, sample) * target.LocalRotation;
+        }
+        public Quaternion EvaluatePivot(WindTarget target, Sample sample)
+        {
             var restDirectionAvatar = target.RestDirection;
             var variedDirection = sample.VariedDirection;
             var windForce = sample.WindForce;
@@ -81,7 +85,7 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
             desiredDirection = Vector3.RotateTowards(restDirectionAvatar, desiredDirection, maxTotalAngle, 0f);
             var windRotationAvatar = Quaternion.FromToRotation(restDirectionAvatar, desiredDirection);
             var windRotationParent = Quaternion.Inverse(target.ParentRotation) * windRotationAvatar * target.ParentRotation;
-            return windRotationParent * target.LocalRotation;
+            return windRotationParent;
         }
         public Quaternion Evaluate(WindTarget target, float time) { return Evaluate(target, At(time)); }
         private static float PeriodicNoise(float time, int seed, int baseCycles)

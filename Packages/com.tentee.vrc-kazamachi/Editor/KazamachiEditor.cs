@@ -13,7 +13,7 @@ namespace TenteEEEE.Kazamachi.Editor
         private SerializedProperty _initialElevation, _maxElevationAngle, _maxWindSpeed;
         private SerializedProperty _gustStrength, _gustFrequency, _maxLeanAngle;
         private SerializedProperty _loopDuration, _sampleRate, _seed, _targetSelection;
-        private SerializedProperty _included, _excluded, _skipAnimated, _autoKeywords;
+        private SerializedProperty _included, _excluded, _autoKeywords;
         private SerializedProperty _skipHidden;
         private bool _showDetails;
         private string _detailsKey;
@@ -38,7 +38,6 @@ namespace TenteEEEE.Kazamachi.Editor
             _targetSelection = Find("targetSelection");
             _included = Find("includedPhysBones");
             _excluded = Find("excludedPhysBones");
-            _skipAnimated = Find("skipRootsWithAnimation");
             _autoKeywords = Find("autoExcludeNameKeywords");
             _skipHidden = Find("skipNeverActivePhysBones");
         }
@@ -127,7 +126,6 @@ namespace TenteEEEE.Kazamachi.Editor
             }
             if (mode != KazamachiWind.TargetSelection.IncludeOnly)
                 Field(_skipHidden, "Skip Hidden PhysBones");
-            Field(_skipAnimated, "Skip Animated Roots");
             if (_maxLeanAngle.floatValue <= 0f)
                 EditorGUILayout.HelpBox("Max Lean Angle is zero, so no wind animation will be generated.\n最大傾斜角が0のため、風アニメーションは生成されません。", MessageType.Warning);
             serializedObject.ApplyModifiedProperties();

@@ -5,6 +5,7 @@ using System.Linq;
 using nadena.dev.ndmf;
 using nadena.dev.ndmf.animator;
 using nadena.dev.ndmf.fluent;
+using nadena.dev.ndmf.localization;
 using TenteEEEE.Kazamachi.Editor.Baking;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -24,14 +25,38 @@ namespace TenteEEEE.Kazamachi.Editor
         {
             "m_LocalRotation.x", "m_LocalRotation.y", "m_LocalRotation.z", "m_LocalRotation.w"
         };
-        // Any of these on a root means another animation already rotates it.
-        private static readonly string[] RotationProperties =
+        private const float MinRestCoherence = 0.3f;
+        // Messages carry English and Japanese in the title itself, so the localizer is an identity table.
+        private static readonly Localizer Messages = new Localizer("en-US", () =>
+            new List<(string, Func<string, string>)>
+            {
+                ("en-US", key => key)
+            });
+
+        private sealed class BuildMessage : SimpleError
         {
-            "m_LocalRotation.x", "m_LocalRotation.y", "m_LocalRotation.z", "m_LocalRotation.w",
-            "localEulerAnglesRaw.x", "localEulerAnglesRaw.y", "localEulerAnglesRaw.z",
-            "localEulerAnglesBaked.x", "localEulerAnglesBaked.y", "localEulerAnglesBaked.z",
-            "localEulerAngles.x", "localEulerAngles.y", "localEulerAngles.z"
-        };
+            private readonly string english;
+            private readonly string japanese;
+            private readonly ErrorSeverity severity;
+            public BuildMessage(ErrorSeverity severity, string english, string japanese, Object reference)
+            {
+                this.severity = severity;
+                this.english = english;
+                this.japanese = japanese;
+                if (reference != null) AddReference(ObjectRegistry.GetReference(reference));
+            }
+            public override Localizer Localizer => Messages;
+            public override string TitleKey => english;
+            public override ErrorSeverity Severity => severity;
+            public override string FormatTitle() => english + "\n" + japanese;
+            public override string FormatDetails() => null;
+            public override string FormatHint() => null;
+        }
+
+        private static void Report(ErrorSeverity severity, string english, string japanese, Object reference = null)
+        {
+            ErrorReport.ReportError(new BuildMessage(severity, english, japanese, reference));
+        }
         private const string KazamachiIconGuid = "efaaa1d7f0314fd6af710a974d678a66";
         private const string WindIconGuid = "c2002acd2ac14bd28246f5030b4188c4";
         private const string DirectionIconGuid = "387adb1b1bb445edbdb8eb6eb907cdbd";
@@ -42,8 +67,7 @@ namespace TenteEEEE.Kazamachi.Editor
         {
             public int Clips;
             public long StoredKeys;
-            // Keys 0.2.0 stored for the same clips (one key per Sample Rate sample), for the log ratio.
-            public long LegacyKeys;
+
         }
 
         private sealed class RuntimeControlState
@@ -144,20 +168,37 @@ namespace TenteEEEE.Kazamachi.Editor
             var controls = CreateRuntimeControlState(context);
             var icons = new MenuIcons();
             var generating = new List<GeneratingWind>();
+            var spreadRoots = new List<string>();
+            var allPhysBones = context.AvatarRootObject.GetComponentsInChildren<VRCPhysBoneBase>(true);
+            var exclusionCounts = new Dictionary<string, int>();
+            var reservedCost = 0;
 
             for (var windIndex = 0; windIndex < settings.Length; windIndex++)
             {
                 var wind = settings[windIndex];
                 if (wind.maxLeanAngle <= 0f)
                 {
-                    Debug.LogWarning("[Kazamachi] 最大傾斜角がゼロの設定をスキップしました。", wind);
+                    Report(ErrorSeverity.NonFatal, "Max lean angle is zero; this wind was skipped.",
+                        "最大傾斜角がゼロのため、この風をスキップしました。", wind);
+                    continue;
+                }
+
+                var needed = wind.verticalControl ? 33 : 25;
+                if (controls != null) controls.Parameters.parameters = controls.ParameterList.ToArray();
+                var currentCost = controls != null ? controls.Parameters.CalcTotalCost() : 0;
+                var available = VRCExpressionParameters.MAX_PARAMETER_COST - currentCost - reservedCost;
+                if (needed > available)
+                {
+                    Report(ErrorSeverity.NonFatal,
+                        "Wind skipped: needs " + needed + " synced bits; " + Math.Max(0, available) + " available.",
+                        "風をスキップしました。必要: " + needed + " bit、空き: " + Math.Max(0, available) + " bit。", wind);
                     continue;
                 }
 
                 var settingRootCount = 0;
                 var targetInfos = new List<TargetInfo>();
                 var groupedTargets = ResolveTargets(wind, avatarRoot, animatorServices, hasVrcFury,
-                        hiddenPhysBones, ref skippedCount)
+                        hiddenPhysBones, exclusionCounts, ref skippedCount)
                     .GroupBy(ResolveRoot)
                     .Where(group => group.Key != null)
                     .OrderBy(group => Depth(group.Key))
@@ -171,7 +212,8 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (!IsSafeRoot(root, avatarRoot, humanoidBones))
                     {
                         skippedCount++;
-                        Debug.LogWarning(
+                        CountExclusion(exclusionCounts, "unsafe");
+                        Debug.Log(
                             "[Kazamachi] AvatarルートまたはHumanoid本体を動かすPhysBoneを安全のため除外しました: " +
                             RelativePath(avatarRoot, root), wind);
                         continue;
@@ -179,50 +221,89 @@ namespace TenteEEEE.Kazamachi.Editor
 
                     if (processedRoots.Contains(root))
                     {
-                        foreach (var pb in physBones) pb.isAnimated = true;
+                        continue;
+                    }
+
+                    if (IsInsideOtherChain(root, allPhysBones))
+                    {
+                        skippedCount++;
+                        CountExclusion(exclusionCounts, "inside-chain");
+                        Debug.Log(
+                            "[Kazamachi] 別のPhysBoneのチェーン内にあるrootを除外しました: " +
+                            RelativePath(avatarRoot, root), wind);
                         continue;
                     }
 
                     if (processedRoots.Any(existing => root.IsChildOf(existing) || existing.IsChildOf(root)))
                     {
                         skippedCount++;
-                        Debug.LogWarning(
+                        CountExclusion(exclusionCounts, "nested");
+                        Debug.Log(
                             "[Kazamachi] 二重に風が掛かる入れ子PhysBoneルートを除外しました: " +
                             RelativePath(avatarRoot, root), wind);
                         continue;
                     }
 
-                    var virtualPath = animatorServices.ObjectPathRemapper.GetVirtualPathForObject(root);
-                    if (wind.skipRootsWithAnimation && HasRotationAnimation(animatorServices, virtualPath))
-                    {
-                        skippedCount++;
-                        Debug.LogWarning(
-                            "[Kazamachi] 既存の回転アニメーションと競合するため除外しました: " +
-                            RelativePath(avatarRoot, root), wind);
-                        continue;
-                    }
-
                     var representative = physBones[0];
-                    var restDirection = GetRestDirectionInAvatarSpace(avatarRoot, root, representative);
+                    bool spread;
+                    var restDirection = GetRestDirectionInAvatarSpace(avatarRoot, root, representative, out spread);
+                    if (spread) spreadRoots.Add(RelativePath(avatarRoot, root));
                     targetInfos.Add(new TargetInfo
                     {
-                        Path = virtualPath,
                         Root = root,
                         RestDirection = restDirection
                     });
 
-                    foreach (var pb in physBones) pb.isAnimated = true;
                     processedRoots.Add(root);
                     settingRootCount++;
                 }
 
-                if (settingRootCount > 0) generating.Add(new GeneratingWind { Wind = wind, Targets = targetInfos });
+                if (settingRootCount > 0)
+                {
+                    generating.Add(new GeneratingWind { Wind = wind, Targets = targetInfos });
+                    reservedCost += needed;
+                }
+                else
+                {
+                    Report(ErrorSeverity.NonFatal, "No safe roots for this wind.",
+                        "この風に安全に処理できるrootがありません。", wind);
+                }
+            }
+
+            if (spreadRoots.Count > 0)
+                Report(ErrorSeverity.NonFatal,
+                    "Spread-out roots use endpoint or avatar down. Consider Include Only on individual strands: " + string.Join(", ", spreadRoots),
+                    "子が広がったrootには末端方向またはアバターの下方向を使います。各毛束をInclude Onlyで指定することを検討してください: " + string.Join(", ", spreadRoots));
+            if (exclusionCounts.Count > 0)
+            {
+                var byReason = string.Join(", ", exclusionCounts.Select(pair => pair.Key + "=" + pair.Value));
+                Report(ErrorSeverity.Information,
+                    "Excluded PhysBones/roots by reason: " + byReason,
+                    "除外数（理由別）: " + byReason);
             }
 
             foreach (var entry in generating)
             {
                 var wind = entry.Wind;
                 var targetInfos = entry.Targets;
+                foreach (var target in targetInfos)
+                {
+                    var root = target.Root;
+                    var parent = root.parent;
+                    var sibling = root.GetSiblingIndex();
+                    var position = root.localPosition;
+                    var pivot = new GameObject(root.name + " Kazamachi Pivot").transform;
+                    pivot.SetParent(parent, false);
+                    pivot.SetSiblingIndex(sibling);
+                    pivot.localPosition = position;
+                    pivot.localRotation = Quaternion.identity;
+                    pivot.localScale = Vector3.one;
+                    // The inserted local matrix is only a translation, so even a non-uniformly
+                    // scaled parent sees exactly the same root and descendant world matrices.
+                    root.SetParent(pivot, false);
+                    root.localPosition = Vector3.zero;
+                    target.Path = animatorServices.ObjectPathRemapper.GetVirtualPathForObject(pivot);
+                }
                 var number = generating.Count == 1 ? "" : (generatedLayerCount + 1).ToString();
                 var suffix = number.Length == 0 ? "" : " " + number;
                 var values = CreateWindControls(wind, "Kazamachi" + suffix, "TenteEEEE/Kazamachi" + number);
@@ -237,7 +318,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 {
                     Path = target.Path,
                     RestDirection = target.RestDirection,
-                    ParentRotation = Quaternion.Inverse(avatarRoot.rotation) * target.Root.parent.rotation,
+                    ParentRotation = Quaternion.Inverse(avatarRoot.rotation) * target.Root.parent.parent.rotation,
                     LocalRotation = target.Root.localRotation
                 }).ToList();
                 var neutral = CreateNeutralClip(bakeTargets, bakeSettings, stats, "Wind Neutral" + suffix);
@@ -268,16 +349,16 @@ namespace TenteEEEE.Kazamachi.Editor
             if (generatedLayerCount > 0)
             {
                 FinalizeRuntimeControls(context, controls);
-                Debug.Log("[Kazamachi] " + processedRoots.Count +
-                          " 個のPhysBoneルートへ風を生成しました。除外: " + skippedCount +
-                          "、生成クリップ: " + stats.Clips +
-                          "、保存キー " + stats.StoredKeys.ToString("N0") +
-                          "（0.2.0相当 " + stats.LegacyKeys.ToString("N0") + "、" +
-                          (100.0 * stats.StoredKeys / stats.LegacyKeys).ToString("F1") + "%）");
+                var megabytes = EstimateMegabytes(stats.StoredKeys);
+                Report(ErrorSeverity.Information,
+                    "Wind added to " + processedRoots.Count + " PhysBone roots (" + skippedCount + " excluded). Animation data: about " + megabytes + " MB.",
+                    processedRoots.Count + " 個のPhysBone rootに風を追加しました（除外 " + skippedCount + "）。アニメーションデータの目安: 約 " + megabytes + " MB。");
             }
             else
             {
-                Debug.LogWarning("[Kazamachi] 安全に処理できるPhysBoneルートがありませんでした。");
+                Report(ErrorSeverity.Information,
+                    "No PhysBone roots received wind (" + skippedCount + " excluded).",
+                    "風を追加したPhysBone rootはありません（除外 " + skippedCount + "）。");
             }
 
             Cleanup(allSettings, context.AvatarRootTransform);
@@ -302,6 +383,7 @@ namespace TenteEEEE.Kazamachi.Editor
 
         private static IEnumerable<VRCPhysBoneBase> ResolveTargets(KazamachiWind wind, Transform avatarRoot,
             AnimatorServicesContext services, bool hasVrcFury, HashSet<VRCPhysBoneBase> hiddenPhysBones,
+            Dictionary<string, int> exclusionCounts,
             ref int skippedCount)
         {
             IEnumerable<VRCPhysBoneBase> targets;
@@ -313,12 +395,26 @@ namespace TenteEEEE.Kazamachi.Editor
             {
                 var excluded = new HashSet<VRCPhysBoneBase>(
                     (wind.excludedPhysBones ?? Enumerable.Empty<VRCPhysBoneBase>()).Where(pb => pb != null));
-                targets = avatarRoot.GetComponentsInChildren<VRCPhysBoneBase>(true)
-                    .Where(pb => pb != null && !excluded.Contains(pb));
-                if (wind.targetSelection == KazamachiWind.TargetSelection.Auto)
+                var selected = new List<VRCPhysBoneBase>();
+                foreach (var pb in avatarRoot.GetComponentsInChildren<VRCPhysBoneBase>(true))
                 {
-                    targets = targets.Where(pb => !IsAutoExcluded(pb, wind, avatarRoot));
+                    if (pb == null) continue;
+                    if (excluded.Contains(pb))
+                    {
+                        CountExclusion(exclusionCounts, "explicit");
+                        skippedCount++;
+                        Debug.Log("[Kazamachi] 指定により除外: " + RelativePath(avatarRoot, pb.transform), pb);
+                        continue;
+                    }
+                    if (wind.targetSelection == KazamachiWind.TargetSelection.Auto &&
+                        IsAutoExcluded(pb, wind, avatarRoot, exclusionCounts))
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+                    selected.Add(pb);
                 }
+                targets = selected;
             }
 
             var result = targets.Where(pb => pb != null && pb.transform.IsChildOf(avatarRoot)).Distinct().ToList();
@@ -332,6 +428,7 @@ namespace TenteEEEE.Kazamachi.Editor
                     {
                         Debug.Log("[Kazamachi] 常に非表示のため除外: " + RelativePath(avatarRoot, pb.transform), pb);
                         skippedCount++;
+                        CountExclusion(exclusionCounts, "hidden");
                     }
                     result.Remove(pb);
                 }
@@ -361,7 +458,48 @@ namespace TenteEEEE.Kazamachi.Editor
 
         // Auto only looks at the component's own GameObject and its root. Walking up the
         // hierarchy would also catch accessories parented under a breast bone.
-        private static bool IsAutoExcluded(VRCPhysBoneBase physBone, KazamachiWind wind, Transform avatarRoot)
+        // True when root is a simulated bone of a PhysBone it does not start, e.g. a strand root
+        // under an excluded parent chain. A pivot there would add a bone to that chain.
+        private static bool IsInsideOtherChain(Transform root, IEnumerable<VRCPhysBoneBase> physBones)
+        {
+            foreach (var physBone in physBones)
+            {
+                if (physBone == null) continue;
+                var chainRoot = ResolveRoot(physBone);
+                if (chainRoot == null || chainRoot == root || !root.IsChildOf(chainRoot)) continue;
+                if (!IsIgnoredByChain(root, chainRoot, physBone)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsIgnoredByChain(Transform root, Transform chainRoot, VRCPhysBoneBase physBone)
+        {
+            if (physBone.ignoreTransforms == null) return false;
+            for (var current = root; current != null && current != chainRoot; current = current.parent)
+            {
+                if (physBone.ignoreTransforms.Contains(current)) return true;
+            }
+            return false;
+        }
+
+        // Built (uncompressed) size per stored key, measured with AssetBundle builds of baked
+        // Kazamachi clips in Unity 2022.3 (about 20.7 bytes). Download size is smaller after LZMA.
+        private const double BytesPerStoredKey = 20.7;
+
+        private static string EstimateMegabytes(long storedKeys)
+        {
+            return (storedKeys * BytesPerStoredKey / 1000000.0).ToString("F1");
+        }
+
+        private static void CountExclusion(Dictionary<string, int> counts, string reason)
+        {
+            int count;
+            counts.TryGetValue(reason, out count);
+            counts[reason] = count + 1;
+        }
+
+        private static bool IsAutoExcluded(VRCPhysBoneBase physBone, KazamachiWind wind, Transform avatarRoot,
+            Dictionary<string, int> exclusionCounts)
         {
             if (wind.autoExcludeNameKeywords == null) return false;
             var names = new[] { physBone.gameObject.name, ResolveRoot(physBone)?.name ?? string.Empty };
@@ -373,6 +511,7 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (name.IndexOf(keyword.Trim(), StringComparison.OrdinalIgnoreCase) < 0) continue;
                     Debug.Log("[Kazamachi] Auto除外: " + RelativePath(avatarRoot, physBone.transform) +
                               " (キーワード '" + keyword + "')", physBone);
+                    CountExclusion(exclusionCounts, "keyword");
                     return true;
                 }
             }
@@ -439,22 +578,25 @@ namespace TenteEEEE.Kazamachi.Editor
             return result;
         }
 
-        private static bool HasRotationAnimation(AnimatorServicesContext services, string path)
-        {
-            return RotationProperties.Any(property => services.AnimationIndex
-                .GetClipsForBinding(EditorCurveBinding.FloatCurve(path, typeof(Transform), property)).Any());
-        }
-
         private static Vector3 GetRestDirectionInAvatarSpace(
-            Transform avatarRoot, Transform root, VRCPhysBoneBase physBone)
+            Transform avatarRoot, Transform root, VRCPhysBoneBase physBone, out bool spread)
         {
             var worldDirection = Vector3.zero;
+            var count = 0;
             foreach (Transform child in root)
             {
                 if (physBone.ignoreTransforms != null && physBone.ignoreTransforms.Contains(child)) continue;
                 var delta = child.position - root.position;
-                if (delta.sqrMagnitude > 0.000001f) worldDirection += delta.normalized;
+                if (delta.sqrMagnitude > 0.000001f)
+                {
+                    worldDirection += delta.normalized;
+                    count++;
+                }
             }
+
+            // Children pointing in all directions cancel, making the normalized sum arbitrary.
+            spread = count >= 2 && worldDirection.magnitude / count < MinRestCoherence;
+            if (spread) worldDirection = Vector3.zero;
 
             if (worldDirection.sqrMagnitude < 0.000001f && physBone.endpointPosition.sqrMagnitude > 0.000001f)
             {
@@ -579,23 +721,22 @@ namespace TenteEEEE.Kazamachi.Editor
         private static VirtualClip CreateWindClip(IList<WindTarget> targets, WindBakeSettings settings,
             BakeStats stats, Vector3 direction, float elevationDegrees, float turbulence, string name)
         {
-            return CreateBakedClip(WindClipBaker.Bake(settings, targets, direction, elevationDegrees, turbulence),
-                settings, stats, name, targets.Count * 4L * (settings.SampleCount + 1));
+            return CreateBakedClip(WindClipBaker.Bake(settings, targets, direction, elevationDegrees, turbulence,
+                    CurveReducer.DefaultToleranceDegrees, true),
+                settings, stats, name);
         }
 
         private static VirtualClip CreateNeutralClip(IList<WindTarget> targets, WindBakeSettings settings,
             BakeStats stats, string name)
         {
-            return CreateBakedClip(WindClipBaker.BakeNeutral(settings, targets), settings, stats, name,
-                targets.Count * 8L);
+            return CreateBakedClip(WindClipBaker.BakeNeutral(settings, targets, true), settings, stats, name);
         }
 
         private static VirtualClip CreateBakedClip(IList<BakedTarget> targets, WindBakeSettings settings,
-            BakeStats stats, string name, long legacyKeys)
+            BakeStats stats, string name)
         {
             var clip = VirtualClip.Create(name);
             stats.Clips++;
-            stats.LegacyKeys += legacyKeys;
             foreach (var target in targets)
             {
                 stats.StoredKeys += target.KeyCount * 4L;

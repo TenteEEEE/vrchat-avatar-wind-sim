@@ -10,7 +10,7 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
         public const int Oversample = 4;
         public static List<BakedTarget> Bake(WindBakeSettings settings, IList<WindTarget> targets,
             Vector3 direction, float elevation, float turbulence,
-            float toleranceDegrees = CurveReducer.DefaultToleranceDegrees)
+            float toleranceDegrees = CurveReducer.DefaultToleranceDegrees, bool pivot = false)
         {
             int n = settings.SampleCount * Oversample;
             var dense = new Quaternion[targets.Count][];
@@ -21,7 +21,7 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
                 var sample = sampler.At((float)i / n);
                 for (int t = 0; t < targets.Count; t++)
                 {
-                    dense[t][i] = sampler.Evaluate(targets[t], sample);
+                    dense[t][i] = pivot ? sampler.EvaluatePivot(targets[t], sample) : sampler.Evaluate(targets[t], sample);
                 }
             }
             var result = new List<BakedTarget>();
@@ -32,12 +32,12 @@ namespace TenteEEEE.Kazamachi.Editor.Baking
             return result;
         }
         // Two constant keys preserve the rest pose for blends without relying on default-value handling.
-        public static List<BakedTarget> BakeNeutral(WindBakeSettings settings, IList<WindTarget> targets)
+        public static List<BakedTarget> BakeNeutral(WindBakeSettings settings, IList<WindTarget> targets, bool pivot = false)
         {
             var result = new List<BakedTarget>();
             foreach (var target in targets)
             {
-                var q = target.LocalRotation;
+                var q = pivot ? Quaternion.identity : target.LocalRotation;
                 var values = new[] { q.x, q.y, q.z, q.w };
                 var curves = new AnimationCurve[4];
                 for (int i = 0; i < 4; i++)

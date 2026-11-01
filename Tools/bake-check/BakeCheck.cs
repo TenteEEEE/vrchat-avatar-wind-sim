@@ -22,6 +22,7 @@ public static class BakeCheck
     private sealed class Report
     {
         public double maxComponentDelta, newMaxAngle, legacyMaxAngle;
+        public double pivotSamplerDelta, pivotLegacyDelta;
         public long newKeys, legacyKeys;
         public List<Result> cases = new List<Result>();
         public List<Summary> summaries = new List<Summary>();
@@ -129,9 +130,12 @@ public static class BakeCheck
                     {
                         float normalizedTime = (float)i / (setting.SampleCount * 8);
                         var truth = sampler.Evaluate(targets[t], normalizedTime);
+                        var pivot = sampler.EvaluatePivot(targets[t], sampler.At(normalizedTime)) * targets[t].LocalRotation;
+                        report.pivotSamplerDelta = Math.Max(report.pivotSamplerDelta, ComponentDelta(pivot, truth));
                         if (i % 8 == 0)
                         {
                             var old = LegacySampler.CalculateRotation(targets[t], setting, normalizedTime, direction, elevation, turbulence);
+                            report.pivotLegacyDelta = Math.Max(report.pivotLegacyDelta, ComponentDelta(pivot, old));
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.x - old.x));
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.y - old.y));
                             result.maxComponentDelta = Math.Max(result.maxComponentDelta, Math.Abs(truth.z - old.z));
@@ -172,12 +176,19 @@ public static class BakeCheck
             File.WriteAllText(output, JsonUtility.ToJson(report, true), new System.Text.UTF8Encoding(false));
             Debug.Log("BakeCheck: max component delta " + report.maxComponentDelta + ", max angle new/legacy " +
                 report.newMaxAngle + "/" + report.legacyMaxAngle + ", keys new/legacy " + report.newKeys + "/" + report.legacyKeys);
-            EditorApplication.Exit(report.maxComponentDelta > 1e-6 ? 1 : 0);
+            Debug.Log("BakeCheck: pivot vs sampler/legacy " + report.pivotSamplerDelta + "/" + report.pivotLegacyDelta);
+            EditorApplication.Exit(report.maxComponentDelta > 1e-6 || report.pivotSamplerDelta > 1e-6 ||
+                report.pivotLegacyDelta > 1e-6 ? 1 : 0);
         }
         catch (Exception exception)
         {
             Debug.LogException(exception);
             EditorApplication.Exit(1);
         }
+    }
+    private static double ComponentDelta(Quaternion a, Quaternion b)
+    {
+        return Math.Max(Math.Max(Math.Abs(a.x - b.x), Math.Abs(a.y - b.y)),
+            Math.Max(Math.Abs(a.z - b.z), Math.Abs(a.w - b.w)));
     }
 }

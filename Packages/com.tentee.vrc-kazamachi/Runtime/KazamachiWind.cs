@@ -89,8 +89,5 @@ namespace TenteEEEE.Kazamachi
         [Tooltip("非アクティブなGameObjectや無効なPhysBoneに有効化アニメーションがない場合、対象から除外します。VRCFuryがあるアバターでは判定を無効にします。Include Onlyでは適用しません。")]
         public bool skipNeverActivePhysBones = true;
 
-        [Tooltip("有効にすると既存アニメーションが回転を制御するPhysBone rootを除外し、アニメーション同士の競合を避けます。")]
-        public bool skipRootsWithAnimation = true;
-
     }
 }
