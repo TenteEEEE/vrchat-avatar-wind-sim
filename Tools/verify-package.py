@@ -2,6 +2,7 @@
 """Fast, dependency-free VPM package structure and boundary check."""
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -52,6 +53,26 @@ def check_manifest() -> None:
             fail(f"package must declare {dependency} in vpmDependencies")
     if "nadena.dev.modular-avatar" in deps:
         fail("package must not depend on Modular Avatar")
+
+
+def release_notes(tag: str | None = None) -> str | None:
+    manifest = json.loads(text(PACKAGE_ROOT / "package.json"))
+    version = manifest["version"]
+    if tag is not None and tag not in (version, f"v{version}"):
+        fail(f"release tag '{tag}' does not match package version '{version}'")
+    changelog = text(PACKAGE_ROOT / "CHANGELOG.md")
+    sections = list(re.finditer(r"^## ([^\n]+)$", changelog, re.MULTILINE))
+    if not sections or sections[0].group(1).split(" - ")[0] != version:
+        fail(f"first changelog entry must match package version '{version}'")
+        return None
+    end = sections[1].start() if len(sections) > 1 else len(changelog)
+    notes = changelog[sections[0].end():end].strip()
+    # The separator introduces older development history, not release notes.
+    notes = notes.split("\n---\n", 1)[0].strip()
+    if not notes:
+        fail(f"changelog entry for '{version}' must not be empty")
+        return None
+    return notes + "\n"
 
 
 def check_meta_pairs() -> dict[str, Path]:
@@ -264,11 +285,18 @@ def check_icons() -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tag", help="Require the release tag to match package.json")
+    parser.add_argument("--notes-output", type=Path, help="Write the current changelog entry as release notes")
+    args = parser.parse_args()
+    notes = None
     try:
         if not PACKAGE_ROOT.is_dir():
             fail(f"package directory is missing: {PACKAGE_ROOT.relative_to(REPOSITORY_ROOT)}")
         else:
             check_manifest()
+            if not ERRORS:
+                notes = release_notes(args.tag)
             metadata = check_meta_pairs()
             check_asmdefs(metadata)
             check_text_encoding()
@@ -284,6 +312,8 @@ def main() -> int:
             print("- " + error)
         return 1
     print("PACKAGE CHECK PASSED")
+    if args.notes_output is not None and notes is not None:
+        args.notes_output.write_text(notes, encoding="utf-8")
     return 0
 
 

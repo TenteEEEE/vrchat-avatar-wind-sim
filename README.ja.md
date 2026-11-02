@@ -2,6 +2,8 @@
 
 VRChatアバターのPhysBoneに風の揺れを加えるツールです。NDMFによるアバターのビルド時にループアニメーションを生成し、Expression Menuから風を操作できます。
 
+**正式版: [v1.0.0](https://github.com/TenteEEEE/vrchat-avatar-wind-sim/releases/tag/v1.0.0)** · [更新履歴](Packages/com.tentee.vrc-kazamachi/CHANGELOG.md)
+
 ## 導入
 
 VPMリポジトリ `https://tenteeeee.github.io/vpm-repos/index.json` を追加して **Kazamachi** をインストールします。アバターのルートを選択し、`GameObject > Kazamachi` からコンポーネントを追加してください。Inspectorで対象と風の設定を行い、NDMF経由でビルドします。

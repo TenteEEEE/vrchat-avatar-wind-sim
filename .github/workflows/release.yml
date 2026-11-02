@@ -59,9 +59,11 @@ jobs:
               echo "::error::Tag '$TAG' must be a semantic version x.x.x, optionally prefixed with v."
               exit 1
             fi
-            VERSION="${BASH_REMATCH[1]}"
-            jq --arg version "$VERSION" '.version = $version' "$packagePath/package.json" > package.json.tmp
-            mv package.json.tmp "$packagePath/package.json"
+            TAG_VERSION="${BASH_REMATCH[1]}"
+            if [[ "$VERSION" != "$TAG_VERSION" ]]; then
+              echo "::error::Tag '$TAG' does not match package.json version '$VERSION'. Commit the version and changelog before tagging."
+              exit 1
+            fi
           elif [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
             echo '::error::Could not read a package version from package.json.'
             exit 1
@@ -72,8 +74,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Test release metadata validation
+        run: python3 Tools/test-release.py
+
       - name: Verify package
-        run: python3 Tools/verify-package.py
+        env:
+          TAG: ${{ steps.package.outputs.tag }}
+        run: python3 Tools/verify-package.py --tag "$TAG" --notes-output release-notes.md
 
       - name: Create VPM archive
         working-directory: ${{ env.packagePath }}
@@ -116,6 +123,7 @@ jobs:
             ${{ env.packageName }}-${{ steps.package.outputs.version }}.zip
             ${{ env.packageName }}-${{ steps.package.outputs.version }}.unitypackage
             ${{ env.packagePath }}/package.json
+            release-notes.md
           if-no-files-found: error
 
       - name: Publish release assets
@@ -140,10 +148,11 @@ jobs:
               exit 1
             fi
             gh release upload "$TAG" "$ZIP_FILE" "$UNITYPACKAGE_FILE" "$PACKAGE_JSON" --clobber
+            gh release edit "$TAG" --title "Kazamachi $TAG" --notes-file release-notes.md
             echo 'mode=uploaded to existing release' >> "$GITHUB_OUTPUT"
           else
             gh release create "$TAG" "$ZIP_FILE" "$UNITYPACKAGE_FILE" "$PACKAGE_JSON" \
-              --title "$TAG" --generate-notes --target "${GITHUB_SHA}"
+              --title "Kazamachi $TAG" --notes-file release-notes.md --verify-tag --latest --target "${GITHUB_SHA}"
             echo 'mode=created' >> "$GITHUB_OUTPUT"
           fi
 

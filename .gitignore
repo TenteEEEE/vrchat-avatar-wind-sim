@@ -11,3 +11,4 @@ Packages/packages-lock.json
 *.sln
 *.unitypackage
 *.zip
+__pycache__/
