@@ -15,6 +15,7 @@ namespace TenteEEEE.Kazamachi.Editor
         private SerializedProperty _loopDuration, _sampleRate, _seed, _targetSelection;
         private SerializedProperty _included, _excluded, _autoKeywords;
         private SerializedProperty _skipHidden;
+        private SerializedProperty _splitHumanoidRoot;
         private bool _showDetails;
         private string _detailsKey;
 
@@ -40,94 +41,129 @@ namespace TenteEEEE.Kazamachi.Editor
             _excluded = Find("excludedPhysBones");
             _autoKeywords = Find("autoExcludeNameKeywords");
             _skipHidden = Find("skipNeverActivePhysBones");
+            _splitHumanoidRoot = Find("splitHumanoidRootPhysBones");
         }
 
-        private SerializedProperty Find(string name) { return serializedObject.FindProperty(name); }
-        private static GUIContent Label(SerializedProperty property, string label)
+        private SerializedProperty Find(string name)
         {
-            return new GUIContent(label, property.tooltip);
+            return serializedObject.FindProperty(name);
         }
-        private static void Field(SerializedProperty property, string label, bool children = false)
+
+        private static void Field(SerializedProperty property, string key, bool children = false)
         {
-            EditorGUILayout.PropertyField(property, Label(property, label), children);
+            EditorGUILayout.PropertyField(property, KazamachiText.Label(key), children);
+        }
+
+        private static GUIContent Content(string key)
+        {
+            return new GUIContent(KazamachiText.Line(key));
+        }
+
+        private void TargetModePopup()
+        {
+            var rect = EditorGUILayout.GetControlRect();
+            EditorGUI.BeginProperty(rect, KazamachiText.Label(KazamachiText.K.TargetSelection), _targetSelection);
+            EditorGUI.BeginChangeCheck();
+            var selected = EditorGUI.Popup(rect, KazamachiText.Label(KazamachiText.K.TargetSelection),
+                _targetSelection.enumValueIndex,
+                new[] { Content(KazamachiText.K.AllPhysBones), Content(KazamachiText.K.IncludeOnly), Content(KazamachiText.K.Auto) });
+            if (EditorGUI.EndChangeCheck()) _targetSelection.enumValueIndex = selected;
+            EditorGUI.EndProperty();
         }
 
         public override void OnInspectorGUI()
         {
-            serializedObject.Update();
-            EditorGUILayout.HelpBox("Builds looping wind animations for PhysBone roots. Use the Radial Puppet to adjust wind direction, strength, and turbulence at runtime.\nPhysBoneのrootにループする風アニメーションを生成します。実行時に風向・強さ・揺らぎを調整できます。", MessageType.Info);
-            var wind = (KazamachiWind)target;
-            if (wind.GetComponentInParent<VRCAvatarDescriptor>() == null)
-                EditorGUILayout.HelpBox("Place this component under a VRChat avatar descriptor.\nVRChatアバターのDescriptorの子階層に配置してください。", MessageType.Warning);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.Wind), EditorStyles.boldLabel);
+                var languageRect = GUILayoutUtility.GetRect(90, EditorGUIUtility.singleLineHeight, GUILayout.Width(90));
+                if (KazamachiText.DrawLanguagePopup(languageRect)) Repaint();
+            }
 
-            EditorGUILayout.LabelField("Wind", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(new GUIContent(
-                "Synced: starts OFF, other players see the wind too.",
-                "風は常にOFFで開始します。操作は他のプレイヤーにも同期されます（同期パラメータ: Wind 1bit + 各スライダー8bit）。"), EditorStyles.miniLabel);
-            Field(_initialDirectionAngle, "Initial Direction (deg)");
-            EditorGUILayout.LabelField("0° = front  |  90° = right  |  180° = back  |  270° = left", EditorStyles.miniLabel);
-            Field(_initialStrength, "Initial Strength");
-            Field(_initialTurbulence, "Initial Turbulence");
-            Field(_verticalControl, "Vertical Control");
+            serializedObject.Update();
+            EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.Intro), MessageType.Info);
+            if (((KazamachiWind)target).GetComponentInParent<VRCAvatarDescriptor>() == null)
+            {
+                EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.AvatarWarning), MessageType.Warning);
+            }
+
+            EditorGUILayout.LabelField(KazamachiText.Label(KazamachiText.K.Synced), EditorStyles.miniLabel);
+            Field(_initialDirectionAngle, KazamachiText.K.Direction);
+            EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.DirectionHint), EditorStyles.miniLabel);
+            Field(_initialStrength, KazamachiText.K.Strength);
+            Field(_initialTurbulence, KazamachiText.K.Turbulence);
+            Field(_verticalControl, KazamachiText.K.Vertical);
             if (_verticalControl.boolValue)
             {
-                Field(_initialElevation, "Initial Elevation");
-                EditorGUILayout.LabelField("0 = down  |  0.5 = level  |  1 = up", EditorStyles.miniLabel);
-                Field(_maxElevationAngle, "Max Elevation Angle (deg)");
+                Field(_initialElevation, KazamachiText.K.Elevation);
+                EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.ElevationHint), EditorStyles.miniLabel);
+                Field(_maxElevationAngle, KazamachiText.K.MaxElevation);
             }
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Range", EditorStyles.boldLabel);
-            Field(_maxWindSpeed, "Max Wind Speed (m/s)");
-            Field(_maxLeanAngle, "Max Lean Angle (deg)");
-            Field(_gustStrength, "Gust Strength");
-            Field(_gustFrequency, "Gust Frequency (/s)");
+            EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.Range), EditorStyles.boldLabel);
+            Field(_maxWindSpeed, KazamachiText.K.MaxSpeed);
+            Field(_maxLeanAngle, KazamachiText.K.MaxLean);
+            Field(_gustStrength, KazamachiText.K.GustStrength);
+            Field(_gustFrequency, KazamachiText.K.GustFrequency);
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Motion", EditorStyles.boldLabel);
-            _showDetails = EditorGUILayout.Foldout(_showDetails, "Advanced", true);
+            EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.Motion), EditorStyles.boldLabel);
+            _showDetails = EditorGUILayout.Foldout(_showDetails, KazamachiText.Line(KazamachiText.K.Advanced), true);
             SessionState.SetBool(_detailsKey, _showDetails);
             if (_showDetails)
             {
                 EditorGUI.indentLevel++;
-                Field(_loopDuration, "Loop Duration (s)");
-                Field(_sampleRate, "Sample Rate");
-                Field(_seed, "Seed");
+                Field(_loopDuration, KazamachiText.K.Loop);
+                Field(_sampleRate, KazamachiText.K.SampleRate);
+                Field(_seed, KazamachiText.K.Seed);
                 EditorGUI.indentLevel--;
             }
+
             var bakeSettings = WindBakeSettings.Create(_loopDuration.floatValue, _sampleRate.intValue,
                 _maxWindSpeed.floatValue, _maxLeanAngle.floatValue, _gustStrength.floatValue,
                 _gustFrequency.floatValue, _seed.intValue, _maxElevationAngle.floatValue);
             int requestedCycles;
-            var cappedCycles = WindBakeSettings.ComputeBaseCycles(bakeSettings.MaxWindSpeed, bakeSettings.SampleRate, bakeSettings.Duration, out requestedCycles);
+            var cappedCycles = WindBakeSettings.ComputeBaseCycles(bakeSettings.MaxWindSpeed, bakeSettings.SampleRate,
+                bakeSettings.Duration, out requestedCycles);
             if (cappedCycles < requestedCycles)
-                EditorGUILayout.HelpBox("Wind speed is limited by the sample rate and loop duration.\nサンプルレートかループ秒数を上げると、より速い揺れを表現できます。", MessageType.Warning);
+            {
+                EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.SpeedWarning), MessageType.Warning);
+            }
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Targets", EditorStyles.boldLabel);
-            Field(_targetSelection, "Target Selection");
+            EditorGUILayout.LabelField(KazamachiText.Line(KazamachiText.K.Targets), EditorStyles.boldLabel);
+            TargetModePopup();
             var mode = (KazamachiWind.TargetSelection)_targetSelection.enumValueIndex;
             if (mode == KazamachiWind.TargetSelection.IncludeOnly)
             {
-                Field(_included, "Included PhysBones", true);
+                Field(_included, KazamachiText.K.Included, true);
                 if (_included.arraySize == 0)
-                    EditorGUILayout.HelpBox("No PhysBones are selected, so no wind animation will be generated.\n対象PhysBoneを指定してください。", MessageType.Warning);
+                {
+                    EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.EmptyIncluded), MessageType.Warning);
+                }
             }
             else if (mode == KazamachiWind.TargetSelection.Auto)
             {
-                Field(_autoKeywords, "Auto Exclude Keywords", true);
-                Field(_excluded, "Excluded PhysBones", true);
-                EditorGUILayout.HelpBox("Auto mode excludes name matches and unsafe roots.\nGameObject名またはroot名のキーワード（既定は胸）を除外します。Humanoid本体、アバタールート、入れ子rootも安全のため除外し、判定結果はビルド時Consoleに表示します。", MessageType.Info);
+                Field(_autoKeywords, KazamachiText.K.AutoKeywords, true);
+                Field(_excluded, KazamachiText.K.Excluded, true);
+                EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.AutoHelp), MessageType.Info);
             }
             else
             {
-                Field(_excluded, "Excluded PhysBones", true);
-                EditorGUILayout.HelpBox("All mode can include accessory and hidden outfit PhysBones.\n胸・アクセサリー・非表示衣装も対象になる場合があります。Humanoid本体、アバタールート、入れ子rootは除外されます。", MessageType.Warning);
+                Field(_excluded, KazamachiText.K.Excluded, true);
+                EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.AllHelp), MessageType.Warning);
             }
+
             if (mode != KazamachiWind.TargetSelection.IncludeOnly)
-                Field(_skipHidden, "Skip Hidden PhysBones");
+            {
+                Field(_skipHidden, KazamachiText.K.SkipHidden);
+            }
+            Field(_splitHumanoidRoot, KazamachiText.K.SplitRoot);
             if (_maxLeanAngle.floatValue <= 0f)
-                EditorGUILayout.HelpBox("Max Lean Angle is zero, so no wind animation will be generated.\n最大傾斜角が0のため、風アニメーションは生成されません。", MessageType.Warning);
+            {
+                EditorGUILayout.HelpBox(KazamachiText.Text(KazamachiText.K.ZeroLean), MessageType.Warning);
+            }
             serializedObject.ApplyModifiedProperties();
         }
     }

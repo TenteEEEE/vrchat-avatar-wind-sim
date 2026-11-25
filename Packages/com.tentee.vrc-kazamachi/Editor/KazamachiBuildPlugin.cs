@@ -44,10 +44,14 @@ namespace TenteEEEE.Kazamachi.Editor
             public override Localizer Localizer => Messages;
             public override string TitleKey => english;
             public override ErrorSeverity Severity => severity;
-            public override string FormatTitle() => english + "\n" + japanese;
+            public override string FormatTitle() => T(japanese, english);
             public override string FormatDetails() => null;
             public override string FormatHint() => null;
         }
+
+        private static string T(string ja, string en) => KazamachiText.Select(ja, en, "\n");
+
+        private static string MenuLabel(string ja, string en) => KazamachiText.Language == InspectorLanguage.English ? en : ja;
 
         private static void Report(ErrorSeverity severity, string english, string japanese, Object reference = null)
         {
@@ -71,6 +75,7 @@ namespace TenteEEEE.Kazamachi.Editor
             public VRCExpressionParameters Parameters;
             public List<VRCExpressionParameters.Parameter> ParameterList;
             public VRCExpressionsMenu RootMenu;
+            public HashSet<VRCExpressionsMenu> KazamachiOverflowPages = new HashSet<VRCExpressionsMenu>();
         }
 
         private sealed class GeneratingWind
@@ -141,7 +146,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 Report(ErrorSeverity.NonFatal, "FX Animator not found; wind was not generated.",
                     "FX Animatorが見つからないため、風を生成できませんでした。", settings[0]);
                 LogSummary(0, 0, stats, false, new Dictionary<string, List<string>>(),
-                    new List<string>(), settings[0]);
+                    new List<string>(), new List<KeyValuePair<string, int>>(), false, settings[0]);
                 Cleanup(allSettings, context.AvatarRootTransform);
                 return;
             }
@@ -168,6 +173,11 @@ namespace TenteEEEE.Kazamachi.Editor
             var exclusions = new Dictionary<string, List<string>>();
             var ignoredPivots = new List<string>();
             var reservedCost = 0;
+            // Destroyed UnityEngine.Objects compare equal to each other, so cache by instance ID.
+            var splitCopies = new Dictionary<int, List<VRCPhysBoneBase>>();
+            var splitChildren = new HashSet<Transform>();
+            var splitLog = new List<KeyValuePair<string, int>>();
+            var disabledHumanoidRootExcluded = false;
 
             for (var windIndex = 0; windIndex < settings.Length; windIndex++)
             {
@@ -192,8 +202,16 @@ namespace TenteEEEE.Kazamachi.Editor
                 }
 
                 var targetInfos = new List<TargetInfo>();
-                var groupedTargets = ResolveTargets(wind, avatarRoot, animatorServices, hasVrcFury,
-                        hiddenPhysBones, exclusions, ref skippedCount)
+                var resolvedTargets = ResolveTargets(wind, avatarRoot, animatorServices, hasVrcFury,
+                        hiddenPhysBones, exclusions, splitCopies, ref skippedCount)
+                    .ToList();
+                var splitFailures = new Dictionary<VRCPhysBoneBase, string>();
+                if (wind.splitHumanoidRootPhysBones)
+                {
+                    resolvedTargets = SplitHumanoidRootPhysBones(resolvedTargets, avatarRoot, humanoidBones,
+                        splitChildren, animatorServices, splitCopies, splitFailures, splitLog, ref allPhysBones);
+                }
+                var groupedTargets = resolvedTargets
                     .GroupBy(ResolveRoot)
                     .Where(group => group.Key != null)
                     .OrderBy(group => Depth(group.Key))
@@ -207,12 +225,27 @@ namespace TenteEEEE.Kazamachi.Editor
                     if (!IsSafeRoot(root, avatarRoot, humanoidBones))
                     {
                         skippedCount++;
-                        AddExclusion(exclusions, "unsafe", RelativePath(avatarRoot, root));
+                        var detail = RelativePath(avatarRoot, root);
+                        HumanBodyBones humanoidName;
+                        if (humanoidBones.TryGetValue(root, out humanoidName))
+                        {
+                            if (!wind.splitHumanoidRootPhysBones) disabledHumanoidRootExcluded = true;
+                            var details = physBones.Select(pb =>
+                            {
+                                string reason;
+                                return "PhysBone: " + RelativePath(avatarRoot, pb.transform) +
+                                    (splitFailures.TryGetValue(pb, out reason) ? "; " + reason : "");
+                            });
+                            detail += "（humanoid: " + humanoidName + ", " + string.Join(", ", details) + "）";
+                        }
+                        AddExclusion(exclusions, "unsafe", detail);
                         continue;
                     }
 
                     if (processedRoots.Contains(root))
                     {
+                        skippedCount++;
+                        AddExclusion(exclusions, "duplicate", RelativePath(avatarRoot, root));
                         continue;
                     }
 
@@ -257,9 +290,11 @@ namespace TenteEEEE.Kazamachi.Editor
 
             if (spreadRoots.Count > 0)
             {
-                Debug.LogWarning("[Kazamachi] Spread-out roots use endpoint or avatar down. Consider Include Only on individual strands: " +
-                    string.Join(", ", spreadRoots) + "\n[Kazamachi] 子が広がったrootには末端方向またはアバターの下方向を使います。各毛束をInclude Onlyで指定することを検討してください: " +
-                    string.Join(", ", spreadRoots));
+                Debug.LogWarning(T(
+                    "[Kazamachi] 子が広がったrootには末端方向またはアバターの下方向を使います。" +
+                    "各毛束をInclude Onlyで指定することを検討してください: " + string.Join(", ", spreadRoots),
+                    "[Kazamachi] Spread-out roots use endpoint or avatar down. " +
+                    "Consider Include Only on individual strands: " + string.Join(", ", spreadRoots)));
             }
 
             foreach (var entry in generating)
@@ -340,7 +375,8 @@ namespace TenteEEEE.Kazamachi.Editor
                 FinalizeRuntimeControls(context, controls);
             }
             var logContext = generating.Count > 0 ? generating[0].Wind : settings[0];
-            LogSummary(processedRoots.Count, skippedCount, stats, hasVrcFury, exclusions, ignoredPivots, logContext);
+            LogSummary(processedRoots.Count, skippedCount, stats, hasVrcFury, exclusions, ignoredPivots,
+                splitLog, disabledHumanoidRootExcluded, logContext);
 
             Cleanup(allSettings, context.AvatarRootTransform);
         }
@@ -364,7 +400,7 @@ namespace TenteEEEE.Kazamachi.Editor
 
         private static IEnumerable<VRCPhysBoneBase> ResolveTargets(KazamachiWind wind, Transform avatarRoot,
             AnimatorServicesContext services, bool hasVrcFury, HashSet<VRCPhysBoneBase> hiddenPhysBones,
-            Dictionary<string, List<string>> exclusions,
+            Dictionary<string, List<string>> exclusions, Dictionary<int, List<VRCPhysBoneBase>> splitCopies,
             ref int skippedCount)
         {
             IEnumerable<VRCPhysBoneBase> targets;
@@ -397,7 +433,20 @@ namespace TenteEEEE.Kazamachi.Editor
                 targets = selected;
             }
 
-            var result = targets.Where(pb => pb != null && pb.transform.IsChildOf(avatarRoot)).Distinct().ToList();
+            var result = new List<VRCPhysBoneBase>();
+            foreach (var pb in targets)
+            {
+                // A destroyed original can remain in Included PhysBones; keep its managed reference to map it to cached copies.
+                if (ReferenceEquals(pb, null)) continue;
+                List<VRCPhysBoneBase> cached;
+                if (splitCopies.TryGetValue(pb.GetInstanceID(), out cached))
+                {
+                    result.AddRange(cached);
+                    continue;
+                }
+                if (pb != null && pb.transform.IsChildOf(avatarRoot)) result.Add(pb);
+            }
+            result = result.Distinct().ToList();
             if (wind.targetSelection != KazamachiWind.TargetSelection.IncludeOnly &&
                 wind.skipNeverActivePhysBones && !hasVrcFury)
             {
@@ -413,6 +462,57 @@ namespace TenteEEEE.Kazamachi.Editor
                 }
             }
             return result;
+        }
+
+        private static List<VRCPhysBoneBase> SplitHumanoidRootPhysBones(
+            IEnumerable<VRCPhysBoneBase> targets, Transform avatarRoot,
+            Dictionary<Transform, HumanBodyBones> humanoidBones, HashSet<Transform> splitChildren,
+            AnimatorServicesContext services, Dictionary<int, List<VRCPhysBoneBase>> splitCopies,
+            Dictionary<VRCPhysBoneBase, string> splitFailures,
+            List<KeyValuePair<string, int>> splitLog, ref VRCPhysBoneBase[] allPhysBones)
+        {
+            var expandedTargets = new List<VRCPhysBoneBase>();
+            var didSplit = false;
+            foreach (var pb in targets)
+            {
+                var root = ResolveRoot(pb);
+                if (root == null || root == avatarRoot || !humanoidBones.ContainsKey(root))
+                {
+                    expandedTargets.Add(pb);
+                    continue;
+                }
+                string failure;
+                var children = GetSplitChildren(pb, root, humanoidBones, splitChildren, services, out failure);
+                if (children == null)
+                {
+                    splitFailures[pb] = failure;
+                    expandedTargets.Add(pb);
+                    continue;
+                }
+
+                var originalInstanceId = pb.GetInstanceID();
+                var originalPath = RelativePath(avatarRoot, pb.transform);
+                var copies = new List<VRCPhysBoneBase>();
+                foreach (var child in children)
+                {
+                    var copy = pb.gameObject.AddComponent(pb.GetType()) as VRCPhysBoneBase;
+                    EditorUtility.CopySerialized(pb, copy);
+                    copy.rootTransform = child;
+                    copy.ignoreTransforms = pb.ignoreTransforms == null
+                        ? new List<Transform>()
+                        : pb.ignoreTransforms.Where(t => t != null && t != child && t.IsChildOf(child)).ToList();
+                    copies.Add(copy);
+                    splitChildren.Add(child);
+                }
+                Object.DestroyImmediate(pb);
+                splitCopies.Add(originalInstanceId, copies);
+                splitLog.Add(new KeyValuePair<string, int>(originalPath, copies.Count));
+                expandedTargets.AddRange(copies);
+                didSplit = true;
+            }
+            if (didSplit)
+                allPhysBones = avatarRoot.gameObject.GetComponentsInChildren<VRCPhysBoneBase>(true);
+            return expandedTargets;
         }
 
         private static bool IsNeverActive(VRCPhysBoneBase pb, Transform avatarRoot, AnimatorServicesContext services)
@@ -481,24 +581,28 @@ namespace TenteEEEE.Kazamachi.Editor
         }
 
         private static void LogSummary(int rootCount, int skippedCount, BakeStats stats, bool hasVrcFury,
-            Dictionary<string, List<string>> exclusions, List<string> ignoredPivots, Object logContext)
+            Dictionary<string, List<string>> exclusions, List<string> ignoredPivots,
+            List<KeyValuePair<string, int>> splitLog, bool showSplitHint, Object logContext)
         {
             var megabytes = EstimateMegabytes(stats.StoredKeys);
             var lines = new List<string>
             {
-                "[Kazamachi] Wind added to " + rootCount + " PhysBone roots (" + skippedCount +
-                    " excluded). Animation data: about " + megabytes + " MB uncompressed.",
-                "[Kazamachi] " + rootCount + " 個のPhysBone rootに風を追加しました（除外 " + skippedCount +
-                    "）。アニメーションデータの目安: 約 " + megabytes + " MB（非圧縮）。"
+                T(
+                    "[Kazamachi] " + rootCount + " 個のPhysBone rootに風を追加しました（除外 " + skippedCount +
+                    "）。アニメーションデータの目安: 約 " + megabytes + " MB（非圧縮）。",
+                    "[Kazamachi] Wind added to " + rootCount + " PhysBone roots (" + skippedCount +
+                    " excluded). Animation data: about " + megabytes + " MB uncompressed.")
             };
             if (hasVrcFury)
             {
-                lines.Add("[Kazamachi] VRCFuryが見つかったため非表示PhysBoneの除外を無効にしました。");
+                lines.Add(T(
+                    "[Kazamachi] VRCFuryが見つかったため非表示PhysBoneの除外を無効にしました。",
+                    "[Kazamachi] Hidden PhysBone exclusion was disabled because VRCFury was detected."));
             }
-            var reasons = new[] { "unsafe", "explicit", "keyword", "hidden", "inside-chain", "nested" };
+            var reasons = new[] { "unsafe", "explicit", "keyword", "hidden", "inside-chain", "nested", "duplicate" };
             if (exclusions.Count > 0)
             {
-                lines.Add("除外（理由別）: " + string.Join(", ", reasons.Where(exclusions.ContainsKey)
+                lines.Add(T("[Kazamachi] 除外（理由別）: ", "[Kazamachi] Excluded by reason: ") + string.Join(", ", reasons.Where(exclusions.ContainsKey)
                     .Select(reason => reason + "=" + exclusions[reason].Count)));
                 foreach (var reason in reasons)
                 {
@@ -510,9 +614,28 @@ namespace TenteEEEE.Kazamachi.Editor
                     }
                 }
             }
+            if (showSplitHint)
+            {
+                lines.Add(T(
+                    "[Kazamachi] Humanoidボーンをrootにするスカートなどに風を付けるには、" +
+                    "\"Split Humanoid-Root PhysBones\"を有効にしてください。",
+                    "[Kazamachi] Enable \"Split Humanoid-Root PhysBones\" to give wind to skirts and " +
+                    "other PhysBones rooted at Humanoid bones."));
+            }
+            if (splitLog.Count > 0)
+            {
+                var componentsAdded = splitLog.Sum(item => item.Value - 1);
+                lines.Add(T(
+                    "[Kazamachi] Humanoid rootのPhysBone " + splitLog.Count + "個を " +
+                    splitLog.Sum(item => item.Value) + "個に分割しました（PhysBoneコンポーネント +" +
+                    componentsAdded + "）。",
+                    "[Kazamachi] Split " + splitLog.Count + " Humanoid-root PhysBones into " +
+                    splitLog.Sum(item => item.Value) + " (PhysBone components +" + componentsAdded + ")."));
+                foreach (var item in splitLog) lines.Add("  - " + T("分割", "split") + ": " + item.Key + " → " + item.Value);
+            }
             if (ignoredPivots.Count > 0)
             {
-                lines.Add("Ignore Transformsにpivotを追加:");
+                lines.Add(T("[Kazamachi] Ignore Transformsにpivotを追加:", "[Kazamachi] Added pivots to Ignore Transforms:"));
                 foreach (var item in ignoredPivots)
                 {
                     lines.Add("  - " + item);
@@ -555,10 +678,62 @@ namespace TenteEEEE.Kazamachi.Editor
             return physBone.rootTransform != null ? physBone.rootTransform : physBone.transform;
         }
 
-        private static bool IsSafeRoot(Transform root, Transform avatarRoot, HashSet<Transform> humanoidBones)
+        private static bool IsSafeRoot(Transform root, Transform avatarRoot,
+            Dictionary<Transform, HumanBodyBones> humanoidBones)
         {
             return root != null && root != avatarRoot && root.parent != null &&
-                   root.IsChildOf(avatarRoot) && !humanoidBones.Contains(root);
+                   root.IsChildOf(avatarRoot) && !humanoidBones.ContainsKey(root);
+        }
+
+        private static List<Transform> GetSplitChildren(VRCPhysBoneBase pb, Transform root,
+            Dictionary<Transform, HumanBodyBones> humanoidBones, HashSet<Transform> alreadySplit,
+            AnimatorServicesContext services, out string failure)
+        {
+            failure = null;
+            if (pb.multiChildType != VRCPhysBoneBase.MultiChildType.Ignore)
+            {
+                failure = "multi-child type";
+                return null;
+            }
+            var children = new List<Transform>();
+            foreach (Transform child in root)
+                if (pb.ignoreTransforms == null || !pb.ignoreTransforms.Contains(child)) children.Add(child);
+            if (children.Count == 0)
+            {
+                failure = "no simulated children";
+                return null;
+            }
+            if (children.Any(humanoidBones.ContainsKey))
+            {
+                failure = "humanoid child";
+                return null;
+            }
+            var path = services.ObjectPathRemapper.GetVirtualPathForObject(pb.transform);
+            if (services.AnimationIndex.GetClipsForBinding(
+                    EditorCurveBinding.FloatCurve(path, pb.GetType(), "m_Enabled")).Any())
+            {
+                failure = "enabled is animated";
+                return null;
+            }
+            if (children.Any(alreadySplit.Contains))
+            {
+                failure = "overlaps another split";
+                return null;
+            }
+            return children;
+        }
+
+        private static Dictionary<Transform, HumanBodyBones> CollectHumanoidBones(GameObject avatar)
+        {
+            var result = new Dictionary<Transform, HumanBodyBones>();
+            var animator = avatar.GetComponent<Animator>();
+            if (animator == null || !animator.isHuman) return result;
+            for (var i = 0; i < (int)HumanBodyBones.LastBone; i++)
+            {
+                var bone = animator.GetBoneTransform((HumanBodyBones)i);
+                if (bone != null && !result.ContainsKey(bone)) result.Add(bone, (HumanBodyBones)i);
+            }
+            return result;
         }
 
         // Match the avatar's existing Write Defaults convention: WD On only when every counted
@@ -594,20 +769,6 @@ namespace TenteEEEE.Kazamachi.Editor
             return stateMachine.DefaultState.Motion.AllReachableNodes()
                 .OfType<VirtualBlendTree>()
                 .Any(tree => tree.BlendType == BlendTreeType.Direct);
-        }
-
-        private static HashSet<Transform> CollectHumanoidBones(GameObject avatar)
-        {
-            var result = new HashSet<Transform>();
-            var animator = avatar.GetComponent<Animator>();
-            if (animator == null || !animator.isHuman) return result;
-
-            for (var i = 0; i < (int)HumanBodyBones.LastBone; i++)
-            {
-                var bone = animator.GetBoneTransform((HumanBodyBones)i);
-                if (bone != null) result.Add(bone);
-            }
-            return result;
         }
 
         private static Vector3 GetRestDirectionInAvatarSpace(
@@ -867,17 +1028,17 @@ namespace TenteEEEE.Kazamachi.Editor
             {
                 new VRCExpressionsMenu.Control
                 {
-                    name = "Wind",
+                    name = MenuLabel("風", "Wind"),
                     icon = icons.Wind,
                     type = VRCExpressionsMenu.Control.ControlType.Toggle,
                     parameter = new VRCExpressionsMenu.Control.Parameter { name = values.Enabled },
                     value = 1f
                 },
-                Radial("Direction", icons.Direction, values.Direction)
+                Radial(MenuLabel("風向", "Direction"), icons.Direction, values.Direction)
             };
-            if (values.Elevation != null) windMenu.controls.Add(Radial("Elevation", icons.Elevation, values.Elevation));
-            windMenu.controls.Add(Radial("Strength", icons.Strength, values.Strength));
-            windMenu.controls.Add(Radial("Turbulence", icons.Turbulence, values.Turbulence));
+            if (values.Elevation != null) windMenu.controls.Add(Radial(MenuLabel("上下", "Elevation"), icons.Elevation, values.Elevation));
+            windMenu.controls.Add(Radial(MenuLabel("強さ", "Strength"), icons.Strength, values.Strength));
+            windMenu.controls.Add(Radial(MenuLabel("揺らぎ", "Turbulence"), icons.Turbulence, values.Turbulence));
             context.AssetSaver.SaveAsset(windMenu);
 
             // Full menus are the norm on finished avatars, so walk down any trailing "More"
@@ -887,7 +1048,8 @@ namespace TenteEEEE.Kazamachi.Editor
             {
                 var last = targetMenu.controls[targetMenu.controls.Count - 1];
                 var isMorePage = last != null && last.type == VRCExpressionsMenu.Control.ControlType.SubMenu &&
-                                 last.subMenu != null && last.name == "More";
+                                 last.subMenu != null &&
+                                 (last.name == "More" || state.KazamachiOverflowPages.Contains(last.subMenu));
                 if (!isMorePage) break;
                 var page = Object.Instantiate(last.subMenu);
                 page.name = last.subMenu.name;
@@ -903,7 +1065,7 @@ namespace TenteEEEE.Kazamachi.Editor
                 type = VRCExpressionsMenu.Control.ControlType.SubMenu,
                 subMenu = windMenu
             });
-            SplitOverflow(context, targetMenu);
+            SplitOverflow(context, targetMenu, state.KazamachiOverflowPages);
         }
 
         private static void FinalizeRuntimeControls(BuildContext context, RuntimeControlState state)
@@ -917,22 +1079,23 @@ namespace TenteEEEE.Kazamachi.Editor
             state.Descriptor.customExpressions = true;
         }
 
-        private static void SplitOverflow(BuildContext context, VRCExpressionsMenu menu)
+        private static void SplitOverflow(BuildContext context, VRCExpressionsMenu menu, HashSet<VRCExpressionsMenu> kazamachiOverflowPages)
         {
             while (menu.controls.Count > VRCExpressionsMenu.MAX_CONTROLS)
             {
                 const int keepCount = VRCExpressionsMenu.MAX_CONTROLS - 1;
                 var page = ScriptableObject.CreateInstance<VRCExpressionsMenu>();
-                page.name = "More";
+                page.name = MenuLabel("その他", "More");
                 page.controls = menu.controls.Skip(keepCount).ToList();
                 menu.controls.RemoveRange(keepCount, menu.controls.Count - keepCount);
                 menu.controls.Add(new VRCExpressionsMenu.Control
                 {
-                    name = "More",
+                    name = MenuLabel("その他", "More"),
                     type = VRCExpressionsMenu.Control.ControlType.SubMenu,
                     subMenu = page
                 });
                 context.AssetSaver.SaveAsset(page);
+                kazamachiOverflowPages.Add(page);
                 menu = page;
             }
         }

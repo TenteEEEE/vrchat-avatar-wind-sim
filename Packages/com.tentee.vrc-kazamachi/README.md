@@ -10,19 +10,19 @@ VRChatアバターの既存PhysBoneに、撮影向けの「風」を加えるNDM
 2. Hierarchyでアバターのルートを選択し、`GameObject > Kazamachi` を実行します。
 3. Inspectorで設定し、通常どおりNDMF経由でビルドまたはアップロードします。
 
-Inspectorの項目名は英語です。マウスオーバーで日本語の説明が表示されます。
+Inspectorには日本語 / English / 両方の言語切替があります。設定はユーザーごとに保存され、初期値はOSの言語に従います。Expression Menuの項目名もビルド時に切り替わり、Englishでは英語、それ以外では日本語になります。
 
 ## Expression Menu
 
 `Kazamachi` サブメニューにアイコン付きで次の項目が追加されます。
 
-| 項目 | 種類 | 内容 |
+| 項目（日本語 / English） | 種類 | 内容 |
 |---|---|---|
-| `Wind` | Toggle | 風のON/OFF。切り替え時は0.5秒でフェードします |
-| `Direction` | Radial | 風向。0=前(+Z)から時計回り。0.25=右、0.5=後、0.75=左、1.0=前 |
-| `Elevation` | Radial | 上下方向（`Vertical Control` ONのときのみ）。0=吹き下ろし、0.5=水平、1=吹き上げ |
-| `Strength` | Radial | 強さ。0=無風、1=Inspectorの最大値。揺れの振幅と速さが同時に変わります |
-| `Turbulence` | Radial | 揺らぎ。0=一定の風、1=方向と強弱が最も乱れる |
+| `風` / `Wind` | Toggle | 風のON/OFF。切り替え時は0.5秒でフェードします |
+| `風向` / `Direction` | Radial | 風向。0=前(+Z)から時計回り。0.25=右、0.5=後、0.75=左、1.0=前 |
+| `上下` / `Elevation` | Radial | 上下方向（`Vertical Control` ONのときのみ）。0=吹き下ろし、0.5=水平、1=吹き上げ |
+| `強さ` / `Strength` | Radial | 強さ。0=無風、1=Inspectorの最大値。揺れの振幅と速さが同時に変わります |
+| `揺らぎ` / `Turbulence` | Radial | 揺らぎ。0=一定の風、1=方向と強弱が最も乱れる |
 
 風向の0と1はどちらも正面です。継ぎ目を正面に置くことで、正面と側面の間を滑らかに選べます。
 
@@ -33,6 +33,7 @@ Inspectorの項目名は英語です。マウスオーバーで日本語の説�
 | Initial Direction / Strength / Turbulence | 90° / 0.35 / 0.35 | 各ラジアルの初期値 |
 | Vertical Control | OFF | 上下ラジアルを追加します。生成クリップ数は17→49に増えます |
 | Skip Hidden PhysBones | ON | 有効化アニメーションのない非表示GameObjectや無効なPhysBoneを除外します。VRCFuryがある場合は判定を無効にします（Include Onlyには適用しません） |
+| Split Humanoid-Root PhysBones | OFF | HumanoidボーンをrootにするPhysBoneを直下の子ごとに分割します。詳細と制約は下記を参照 |
 | Max Elevation Angle | 60° | 上下ラジアル端での風の仰角 |
 | Max Wind Speed (m/s) | 22.5（0〜45） | 強さ1のときの揺れの速さ |
 | Max Lean Angle (deg) | 45（0〜60） | 強さ1のときの基準傾斜角 |
@@ -55,13 +56,24 @@ Max Wind Speedを上げても、Sample RateとLoop Durationで決まる上限よ
 - **Include Only**: `Included PhysBones` に指定したものだけを動かします。
 
 どのモードでも、次のrootは安全のため自動で除外します。
-- Humanoidボーン本体とアバタールート
+- Humanoidボーン本体とアバタールート。HumanoidボーンをrootにするPhysBoneには `Split Humanoid-Root PhysBones` を使えます（下記参照）。
 - 入れ子になって二重に風が掛かるroot
 - 別のPhysBoneのチェーンの途中にあるroot（pivotを挿入するとそのチェーンの物理が変わるため）
 
 別のPhysBoneの `Ignore Transforms` に指定されたrootは対象に残し、ビルド時に挿入したpivotも同じ `Ignore Transforms` に追加します。元のアバターは変更しません。
 
 同じrootを使う複数のPhysBoneは、1つにまとめて処理します。
+
+`Split Humanoid-Root PhysBones` を有効にすると、HumanoidボーンをrootにするPhysBoneを直下の揺れる子ごとに分割して処理できます。スカートなどでrootがHipsになっている場合に便利です。
+
+この状態になるのは、アバター本体のHipsなどに直接スカートのボーンとPhysBoneがある場合です（素体に衣装が組み込まれている、Modular Avatarを使わずに着せ替えた、など）。Modular AvatarのMerge Armatureで統合する衣装は、PhysBoneのrootになっている衣装側のHipsが別ボーンとして残るため対象外で、この設定がなくても風が掛かります。ビルドログの `unsafe` に `humanoid: Hips` と表示された場合に有効にしてください。
+
+- `Multi-Child Type = Ignore` のPhysBoneだけが対象です。シミュレート対象の直下の子にHumanoidボーンが含まれる場合は分割しません。
+- PhysBoneの有効/無効をアニメーションする場合は、コピーが切り替えに追従できないため分割しません。
+- コピーは元のPhysBoneと同じGameObjectに追加するため、余分なTransformは作りません。
+- PhysBoneコンポーネント数が増えるため、パフォーマンスランクやQuestのコンポーネント上限に影響します。
+- 分割後のコピーは元と同じParameter名を共有します。
+- PhysBoneのカーブは1階層短いチェーンに対して評価されるため、揺れ方が少し変わることがあります。
 
 ## 仕組みと制約
 

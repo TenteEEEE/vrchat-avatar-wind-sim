@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.0 - 2026-11-25
+
+HumanoidボーンをrootにするPhysBoneへの対応と、Inspectorの言語切替を追加しました。既存の設定はそのまま使えます。新しい設定は既定でOFFのため、ビルド結果は1.0.0と同じです（Expression Menuの項目名とログの言語を除く）。
+
+### 追加
+
+- `Split Humanoid-Root PhysBones`（既定OFF）: アバター本体のHipsなどをrootにするスカート等のPhysBoneを、直下の揺れる子ごとのPhysBoneに分割して風の対象にします。Multi-Child TypeがIgnoreのPhysBoneのみ対象です。PhysBoneコンポーネント数が増えるため、パフォーマンスランクにご注意ください。
+- Inspectorの言語切替（日本語 / English / 両方）。設定はユーザーごとに保存され、初期値はOSの言語に従います。
+- Expression Menuの項目名を言語設定に合わせて生成します（English以外では「風・風向・上下・強さ・揺らぎ」）。サブメニュー名 `Kazamachi` とパラメータ名は変わりません。
+
+### 改善
+
+- ビルドログとNDMFのレポートが言語設定に従います。
+- Humanoidボーンのため除外したrootについて、ボーン名・PhysBone・分割できなかった理由をログに表示し、分割設定を案内します。
+- 複数のKazamachiコンポーネントで重複したrootを `duplicate` としてログに表示します（以前は表示されず、追加数と除外数の合計が合いませんでした）。
+
+### English
+
+Adds `Split Humanoid-Root PhysBones` (off by default), which splits a PhysBone rooted at a Humanoid bone such as the avatar's own Hips (for example a skirt) into one PhysBone per direct simulated child so it can receive wind. Only Multi-Child Type = Ignore is supported, and the PhysBone component count increases. Modular Avatar Merge Armature outfits are not affected and already receive wind. Also adds a Japanese / English / Both Inspector language switch (saved per user, defaulting to the OS language); generated Expression Menu labels and build messages follow it. The submenu name `Kazamachi` and parameter names are unchanged. The build summary now explains Humanoid-root exclusions and reports duplicate roots.
+
 ## 1.0.0 - 2026-11-02
 
 Kazamachi（風待ち）の初回正式リリースです。0.3.3の風の動きと設定を引き継ぎ、正式版としてバージョン表記と配布情報を整えました。0.3.3からの設定変更は不要です。
